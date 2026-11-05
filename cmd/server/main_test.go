@@ -104,11 +104,14 @@ func TestSameOriginAcceptsSameHostFormRequests(t *testing.T) {
 		{name: "Origin", header: "Origin", value: "http://213.176.7.211:8098"},
 		{name: "Referer fallback", header: "Referer", value: "http://213.176.7.211:8098/"},
 		{name: "Fetch Metadata fallback", header: "Sec-Fetch-Site", value: "same-origin"},
+		{name: "No browser metadata", header: "", value: ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest("POST", "http://213.176.7.211:8098/orders", nil)
-			req.Header.Set(tc.header, tc.value)
+			if tc.header != "" {
+				req.Header.Set(tc.header, tc.value)
+			}
 			if !sameOrigin(req) {
 				t.Fatalf("sameOrigin rejected same-host request with %s", tc.header)
 			}
