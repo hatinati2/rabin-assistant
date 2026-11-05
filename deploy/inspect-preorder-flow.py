@@ -6,7 +6,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 TARGET = "https://trader.rabin.ir/"
 MAX_BUNDLES = 80
-MAX_CONTEXTS = 30
+MAX_CONTEXTS = 28
 MAX_CONTEXT_CHARS = 5600
 
 
@@ -79,31 +79,39 @@ def main():
                             "snippet": snippet[:MAX_CONTEXT_CHARS],
                         })
 
-                    for pattern, label in (
+                    route_patterns = (
                         (r"preOrder\s*:\s*\{[^{}]{0,1800}sendGroupPreOrder", "preorder_route_table"),
                         (r"\b[A-Za-z_$][\w$]*\.Hv\.preOrder\.preOrder", "preorder_create_route_use"),
                         (r"\b[A-Za-z_$][\w$]*\.Hv\.preOrder\.sendGroupPreOrder", "preorder_send_route_use"),
                         (r"\b[A-Za-z_$][\w$]*\.Hv\.preOrder\.sendAllPreOrder", "preorder_send_all_route_use"),
-                    ):
-                        for m in re.finditer(pattern, source):
-                            add_context(label, m.start(), before=2600, after=4300)
-                            if len(result["contexts"]) >= MAX_CONTEXTS:
+                    )
+                    for pattern, label in route_patterns:
+                        for index, match in enumerate(re.finditer(pattern, source)):
+                            if index >= 3:
                                 break
+                            add_context(label, match.start(), before=2600, after=4300)
 
-                    # The order-entry dialog receives its callback via a preOrder prop.
-                    for m in re.finditer(r"\bpreOrder\s*:\s*([A-Za-z_$][\w$]*)", source):
-                        name = m.group(1)
-                        if name in result["linked_callback_names"]:
-                            continue
+                    # Find the callback passed to the order-entry dialog and inspect
+                    # its closest assignment(s), where the POST method and form data
+                    # construction should be visible if they are in this public bundle.
+                    for match in re.finditer(r"\bpreOrder\s*:\s*([A-Za-z_$][\w$]*)", source):
+                        name = match.group(1)
                         result["linked_callback_names"].append(name)
                         assignment = re.compile(r"\b" + re.escape(name) + r"\s*=")
-                        for a in assignment.finditer(source):
-                            add_context("preOrder_prop_callback_" + name, a.start(), before=2600, after=4300)
-                            if len(result["contexts"]) >= MAX_CONTEXTS:
-                                break
+                        occurrences = list(assignment.finditer(source))
+                        occurrences.sort(key=lambda item: abs(item.start() - match.start()))
+                        for item in occurrences[:6]:
+                            add_context(
+                                "preOrder_prop_callback_" + name,
+                                item.start(),
+                                before=3200,
+                                after=5200,
+                            )
                         if len(result["contexts"]) >= MAX_CONTEXTS:
                             break
 
+                    if result["contexts"]:
+                        result["contexts"] = result["contexts"][:MAX_CONTEXTS]
                     if len(result["contexts"]) >= MAX_CONTEXTS:
                         break
                 except Exception:
