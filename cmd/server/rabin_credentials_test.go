@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -93,7 +95,20 @@ func TestRabinCredentialStoreRejectsTamperedCiphertext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data[len(data)-3] ^= 1
+	var record encryptedRabinCredentials
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(record.Ciphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext[len(ciphertext)-1] ^= 1
+	record.Ciphertext = base64.StdEncoding.EncodeToString(ciphertext)
+	data, err = json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(store.path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
