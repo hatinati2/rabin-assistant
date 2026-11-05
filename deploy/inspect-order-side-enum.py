@@ -93,14 +93,14 @@ def main():
 
                                 if module_id not in [x["module_id"] for x in result["candidate_module_snippets"]]:
                                     module_pattern = re.compile(
-                                        r"(?<![\\w$])" + re.escape(module_id)
-                                        + r"\\s*:\\s*(?:function\\s*\\([^)]*\\)|\\([^)]*\\)\\s*=>|[A-Za-z_$]+\\s*=>)\\s*\\{"
+                                        r"(?<![\w$])" + re.escape(module_id)
+                                        + r"\s*:\s*(?:function\s*\([^)]*\)|\([^)]*\)\s*=>|[A-Za-z_$]+\s*=>)\s*\{"
                                     )
                                     module_match = module_pattern.search(source)
                                     if module_match:
                                         module_start = module_match.start()
                                         module_end = min(len(source), module_start + 9000)
-                                        module_text = re.sub(r"\\s+", " ", source[module_start:module_end])
+                                        module_text = re.sub(r"\s+", " ", source[module_start:module_end])
                                         result["candidate_module_snippets"].append({
                                             "module_id": module_id,
                                             "context": module_text[:8500],
