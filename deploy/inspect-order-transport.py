@@ -10,8 +10,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 TARGET = "https://trader.rabin.ir/"
 MAX_BUNDLES = 100
-MAX_MATCHES = 70
-MAX_SNIPPET = 2600
+MAX_MATCHES = 32
+MAX_SNIPPET = 1900
 
 PATTERNS = [
     ("api_origin", r"https?://api\.rabin\.ir(?:/api)?"),
