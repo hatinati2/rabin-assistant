@@ -123,6 +123,7 @@ func TestValidateOrderAcceptsManualJalaliDateAndTimeFields(t *testing.T) {
 }
 
 func TestValidateOrderRejectsAPIUntilIntegrationExists(t *testing.T) {
+	t.Setenv("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "false")
 	now := time.Date(2026, time.November, 5, 8, 40, 0, 0, tehran())
 	form := url.Values{
 		"symbol":          {"TEST"},
