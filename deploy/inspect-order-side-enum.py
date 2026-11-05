@@ -63,11 +63,11 @@ def main():
                         bundle = clean_url(raw_url)
                         result["bundles"].append({"url": bundle, "bytes": len(source)})
 
-                        for match in re.finditer(r"orderSide\\s*:\\s*([A-Za-z_$][\\w$]*)\\.([A-Za-z_$][\\w$]*)", source):
+                        for match in re.finditer(r"orderSide\s*:\s*([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)", source):
                             alias, prop = match.group(1), match.group(2)
                             left = max(0, match.start() - 1800)
                             right = min(len(source), match.end() + 2200)
-                            context_text = re.sub(r"\\s+", " ", source[left:right])
+                            context_text = re.sub(r"\s+", " ", source[left:right])
                             result["order_side_contexts"].append({
                                 "bundle": bundle,
                                 "alias": alias,
@@ -79,7 +79,7 @@ def main():
                             # Find the imported webpack module associated with the alias.
                             region_start = max(0, match.start() - 12000)
                             prefix = source[region_start:match.start()]
-                            imports = list(re.finditer(r"(?:^|[,;])\\s*" + re.escape(alias) + r"\\s*=\\s*(?:[A-Za-z_$][\\w$]*\\.)?\\(?([0-9]{2,8})\\)?", prefix))
+                            imports = list(re.finditer(r"(?:^|[,;])\s*" + re.escape(alias) + r"\s*=\s*(?:[A-Za-z_$][\w$]*\.)?\(?([0-9]{2,8})\)?", prefix))
                             if imports:
                                 module_id = imports[-1].group(1)
                                 if module_id not in [x["module_id"] for x in result["referenced_module_candidates"]]:
@@ -87,16 +87,16 @@ def main():
                                         "module_id": module_id,
                                         "alias": alias,
                                         "property": prop,
-                                        "import_context": re.sub(r"\\s+", " ", prefix[max(0, imports[-1].start()-250):imports[-1].end()+250]),
+                                        "import_context": re.sub(r"\s+", " ", prefix[max(0, imports[-1].start()-250):imports[-1].end()+250]),
                                     })
 
                         # Also retain direct enum-like assignments close to order implementation.
                         if "/order" in source and ("orderSide" in source or "validityType" in source):
-                            for pat in (r"(?:exports|[A-Za-z_$][\\w$]*)\\.(?:T|Pn)\\s*=", r"\\b(?:T|Pn)\\s*:\\s*[^,;}]{1,80}"):
+                            for pat in (r"(?:exports|[A-Za-z_$][\w$]*)\.(?:T|Pn)\s*=", r"\b(?:T|Pn)\s*:\s*[^,;}]{1,80}"):
                                 for m in re.finditer(pat, source):
                                     if len(result["order_side_contexts"]) >= 30:
                                         break
-                                    snippet = re.sub(r"\\s+", " ", source[max(0,m.start()-180):min(len(source),m.end()+240)])
+                                    snippet = re.sub(r"\s+", " ", source[max(0,m.start()-180):min(len(source),m.end()+240)])
                                     if any(x in snippet for x in ("Buy","Sell","خرید","فروش","OrderSide","orderSide")):
                                         result["order_side_contexts"].append({"bundle":bundle,"offset":m.start(),"enum_candidate":snippet})
 
