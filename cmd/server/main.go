@@ -503,6 +503,7 @@ func main() {
 	})
 	mux.HandleFunc("POST /orders", func(w http.ResponseWriter, r *http.Request) {
 		if !sameOrigin(r) {
+			log.Printf("POST /orders rejected: host=%q origin=%q referer=%q fetch-site=%q", r.Host, r.Header.Get("Origin"), r.Referer(), r.Header.Get("Sec-Fetch-Site"))
 			http.Error(w, "درخواست نامعتبر", http.StatusForbidden)
 			return
 		}
