@@ -9,15 +9,17 @@ import (
 )
 
 func TestParseJalaliDateTime(t *testing.T) {
-	want := time.Date(2026, time.November, 5, 8, 44, 50, 0, tehran())
+	base := time.Date(2026, time.November, 5, 8, 44, 50, 0, tehran())
 	cases := []struct {
 		name string
 		raw  string
+		want time.Time
 	}{
-		{name: "Latin digits", raw: "1405/08/14 08:44:50"},
-		{name: "Persian digits", raw: "۱۴۰۵/۰۸/۱۴ ۰۸:۴۴:۵۰"},
-		{name: "Arabic digits and dash", raw: "١٤٠٥-٠٨-١٤ ٠٨:٤٤:٥٠"},
-		{name: "dot separator", raw: "1405.08.14 08:44:50"},
+		{name: "Latin digits", raw: "1405/08/14 08:44:50", want: base},
+		{name: "Persian digits", raw: "۱۴۰۵/۰۸/۱۴ ۰۸:۴۴:۵۰", want: base},
+		{name: "Arabic digits and dash", raw: "١٤٠٥-٠٨-١٤ ٠٨:٤٤:٥٠", want: base},
+		{name: "dot separator", raw: "1405.08.14 08:44:50", want: base},
+		{name: "milliseconds", raw: "1405/08/14 08:44:50.125", want: base.Add(125 * time.Millisecond)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -25,17 +27,17 @@ func TestParseJalaliDateTime(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parseJalaliDateTime(%q): %v", tc.raw, err)
 			}
-			if !got.Equal(want) {
-				t.Fatalf("got %s, want %s", got.Format(time.RFC3339), want.Format(time.RFC3339))
+			if !got.Equal(tc.want) {
+				t.Fatalf("got %s, want %s", got.Format(time.RFC3339Nano), tc.want.Format(time.RFC3339Nano))
 			}
 		})
 	}
 }
 
 func TestFormatJalaliDateTime(t *testing.T) {
-	input := time.Date(2026, time.November, 5, 8, 44, 50, 0, tehran())
+	input := time.Date(2026, time.November, 5, 8, 44, 50, 125*int(time.Millisecond), tehran())
 	got := formatJalaliDateTime(input)
-	want := "۱۴۰۵/۰۸/۱۴ ۰۸:۴۴:۵۰"
+	want := "۱۴۰۵/۰۸/۱۴ ۰۸:۴۴:۵۰٫۱۲۵"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -61,6 +63,28 @@ func TestBuildJalaliCalendarAban1405(t *testing.T) {
 	// 1 Aban 1405 was Friday; Saturday-based index is 6.
 	if cal.FirstWeekday != 6 {
 		t.Fatalf("first weekday = %d, want 6 (Friday)", cal.FirstWeekday)
+	}
+}
+
+func TestActiveAndHistorySnapshots(t *testing.T) {
+	base := time.Date(2026, time.November, 5, 8, 44, 50, 0, tehran())
+	store := &Store{orders: []Order{
+		{ID: "scheduled", Status: statusScheduled, ExecuteAt: base.Add(time.Hour)},
+		{ID: "ready", Status: statusReady, ExecuteAt: base},
+		{ID: "cancelled", Status: statusCancelled, ExecuteAt: base.Add(30 * time.Minute)},
+	}}
+
+	active := store.activeSnapshot()
+	if len(active) != 1 || active[0].ID != "scheduled" {
+		t.Fatalf("active orders = %#v, want only scheduled order", active)
+	}
+
+	history := store.historySnapshot()
+	if len(history) != 2 {
+		t.Fatalf("history has %d orders, want 2", len(history))
+	}
+	if history[0].ID != "cancelled" || history[1].ID != "ready" {
+		t.Fatalf("history order = %q, %q; want newest first", history[0].ID, history[1].ID)
 	}
 }
 
