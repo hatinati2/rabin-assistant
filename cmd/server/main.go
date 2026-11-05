@@ -362,8 +362,10 @@ type PageData struct {
 	JYear         int
 	JMonth        int
 	JDay          int
-	History       bool
-	APIAvailable  bool
+	History              bool
+	APIAvailable         bool
+	Symbols              []MarketSymbol
+	SymbolCatalogStatus  string
 }
 
 func currentJalaliParts(t time.Time) (int, int, int) {
@@ -435,7 +437,7 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="msg">{{.Notice}}</div>{{end}}
 <div class="grid{{if .History}} history{{end}}">{{if not .History}}<section class="card"><h2>تعریف سفارش</h2>
 <form id="order-form" method="post" action="/orders"><label>مسیر ثبت سفارش</label><select id="execution-mode" name="execution_mode"><option value="manual" selected>بدون API — ثبت دستی در رابین</option><option value="api" {{if not .APIAvailable}}disabled{{end}}>با API — ارسال عادی به رابین</option></select>
-<label>انتخاب نماد از فهرست</label><select id="symbol-preset"><option value="">انتخاب نماد (اختیاری)</option><option value="خودرو" data-isin="IRO1IKCO0001">خودرو — ایران‌خودرو</option></select><label>نماد نمایشی</label><input id="order-symbol" name="symbol" maxlength="24" placeholder="مثلاً خودرو" required>
+<label>انتخاب نماد از فهرست</label><select id="symbol-preset"><option value="">انتخاب نماد (اختیاری)</option>{{range .Symbols}}<option value="{{.Symbol}}" data-isin="{{.ISIN}}">{{.Symbol}}{{if .CompanyName}} — {{.CompanyName}}{{end}}{{if .MarketType}} ({{.MarketType}}){{end}}</option>{{end}}</select><div class="foot">{{.SymbolCatalogStatus}}</div><label>نماد نمایشی</label><input id="order-symbol" name="symbol" maxlength="24" placeholder="مثلاً خودرو" required>
 <label>شناسه ISIN (فقط برای مسیر API)</label><input id="order-isin" name="isin" maxlength="12" minlength="12" pattern="[A-Za-z]{2}[A-Za-z0-9]{9}[0-9]" placeholder="مثلاً IR..." autocomplete="off">
 <label>نوع سفارش</label><select name="side"><option value="buy">خرید</option><option value="sell">فروش</option></select>
 <label>قیمت (ریال)</label><input name="price" type="number" min="1" step="1" required>
@@ -613,6 +615,8 @@ func main() {
 	}
 
 	credentials := NewRabinCredentialStore(dataDir, env("RABIN_CREDENTIALS_KEY_FILE", "/etc/rabin-assistant.key"))
+	symbolCatalog := NewMarketSymbolCatalog(filepath.Join(dataDir, "symbols.json"))
+	startMarketSymbolRefresh(symbolCatalog, TSESymbolClient{})
 	if err := store.recoverInterruptedAPIOrders(time.Now().In(tehran())); err != nil {
 		log.Printf("recover interrupted API orders: %v", err)
 	}
@@ -657,7 +661,8 @@ func main() {
 		if history {
 			orders = store.historySnapshot()
 		}
-		data := PageData{Orders: orders, Now: formatJalaliDateTime(now), JYear: year, JMonth: month, JDay: day, History: history, APIAvailable: rabinOrderAPICapable()}
+		symbols, catalogStatus := marketSymbolCatalogStatus(symbolCatalog)
+		data := PageData{Orders: orders, Now: formatJalaliDateTime(now), JYear: year, JMonth: month, JDay: day, History: history, APIAvailable: rabinOrderAPICapable(), Symbols: symbols, SymbolCatalogStatus: catalogStatus}
 		switch r.URL.Query().Get("notice") {
 		case "saved":
 			data.Notice = "سفارش ذخیره شد."
@@ -811,6 +816,8 @@ func renderError(w http.ResponseWriter, store *Store, message string) {
 		JMonth: func() int { _, m, _ := currentJalaliParts(time.Now().In(tehran())); return m }(),
 		JDay: func() int { _, _, d := currentJalaliParts(time.Now().In(tehran())); return d }(),
 		APIAvailable: rabinOrderAPICapable(),
+		Symbols: defaultMarketSymbols(),
+		SymbolCatalogStatus: "در صورت عدم دسترسی به منبع، فهرست پشتیبان خودرو نمایش داده می‌شود.",
 	})
 }
 
