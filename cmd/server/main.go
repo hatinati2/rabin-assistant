@@ -218,7 +218,15 @@ func validateOrder(r *http.Request, now time.Time) (Order, error) {
 	if quantityErr != nil || quantity <= 0 {
 		return Order{}, errors.New("تعداد باید عدد صحیح مثبت باشد")
 	}
-	executeAt, err := parseJalaliDateTime(r.FormValue("execute_at"))
+	rawExecuteAt := strings.TrimSpace(r.FormValue("execute_at"))
+	if rawExecuteAt == "" {
+		rawDate := strings.TrimSpace(r.FormValue("execute_at_date"))
+		rawTime := strings.TrimSpace(r.FormValue("execute_time"))
+		if rawDate != "" && rawTime != "" {
+			rawExecuteAt = rawDate + " " + rawTime
+		}
+	}
+	executeAt, err := parseJalaliDateTime(rawExecuteAt)
 	if err != nil || !executeAt.After(now) {
 		return Order{}, errors.New("تاریخ شمسی یا ساعت معتبر نیست، یا زمان باید در آینده باشد؛ نمونه: ۱۴۰۵/۰۸/۱۴ ۰۸:۴۴:۵۰")
 	}
@@ -315,15 +323,14 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 <label>تعداد</label><input name="quantity" type="number" min="1" step="1" required>
 <label>تاریخ شمسی</label>
 <div class="datebox">
-  <div class="datebar"><input id="jalali-date-display" type="text" value="" placeholder="انتخاب تاریخ شمسی" readonly required><button type="button" id="calendar-toggle">تقویم</button></div>
-  <input name="execute_at" id="execute_at" type="hidden" required>
+  <div class="datebar"><input id="jalali-date-display" name="execute_at_date" type="text" value="" inputmode="numeric" dir="ltr" placeholder="مثلاً ۱۴۰۵/۰۸/۱۴" pattern="[0-9۰-۹٠-٩]{4}[/.-][0-9۰-۹٠-٩]{1,2}[/.-][0-9۰-۹٠-٩]{1,2}" autocomplete="off" required><button type="button" id="calendar-toggle">تقویم</button></div>
   <div id="jalali-calendar" class="calendar" hidden>
     <div class="cal-head"><button type="button" id="cal-prev" class="cal-nav">ماه قبل</button><strong id="cal-title">تقویم شمسی</strong><button type="button" id="cal-next" class="cal-nav">ماه بعد</button></div>
     <div class="cal-grid" id="cal-weekdays"><span>ش</span><span>ی</span><span>د</span><span>س</span><span>چ</span><span>پ</span><span>ج</span></div>
     <div class="cal-grid" id="cal-days"></div>
   </div>
 </div>
-<label>ساعت اجرا (تهران)</label><input id="execute-time" type="time" step="1" value="08:44:50" required>
+<label>ساعت اجرا (تهران)</label><input id="execute-time" name="execute_time" type="time" step="1" value="08:44:50" required>
 <button class="submit" type="submit">ذخیره سفارش</button></form>
 <div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود.</div></section>
 <section class="card"><h2>سفارش‌ها ({{len .Orders}})</h2><div class="tablewrap"><table>
@@ -338,65 +345,99 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { year: Number(document.body.dataset.jyear), month: Number(document.body.dataset.jmonth), day: Number(document.body.dataset.jday) };
+  const state = {
+    year: Number(document.body.dataset.jyear),
+    month: Number(document.body.dataset.jmonth),
+    day: Number(document.body.dataset.jday)
+  };
   const fa = (value) => String(value).replace(/[0-9]/g, d => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
+  const latin = (value) => String(value).replace(/[۰-۹٠-٩]/g, d => {
+    const faDigits = "۰۱۲۳۴۵۶۷۸۹";
+    const arDigits = "٠١٢٣٤٥٦٧٨٩";
+    const index = faDigits.indexOf(d);
+    return String(index >= 0 ? index : arDigits.indexOf(d));
+  });
   const pad = (value) => String(value).padStart(2, "0");
-  const hidden = $("execute_at");
   const display = $("jalali-date-display");
-  const clock = $("execute-time");
   const calendar = $("jalali-calendar");
 
-  function syncValue() {
-    if (!state.day) { hidden.value = ""; display.value = ""; return; }
-    const date = state.year + "/" + pad(state.month) + "/" + pad(state.day);
-    display.value = fa(date);
-    hidden.value = date + " " + (clock.value || "08:44:50");
+  function parseTypedDate() {
+    const raw = latin(display.value.trim());
+    const match = raw.match(/^(\d{4})[\/.-](\d{1,2})[\/.-](\d{1,2})$/);
+    if (!match) return null;
+    const year = Number(match[1]), month = Number(match[2]), day = Number(match[3]);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return {year, month, day};
   }
+
+  function showDate(year, month, day) {
+    display.value = fa(year + "/" + pad(month) + "/" + pad(day));
+  }
+
+  function syncCalendarToTypedDate() {
+    const parsed = parseTypedDate();
+    if (parsed) Object.assign(state, parsed);
+  }
+
   async function renderCalendar() {
-    const response = await fetch("/api/calendar?year=" + state.year + "&month=" + state.month, {headers: {"Accept":"application/json"}});
-    if (!response.ok) { $("cal-title").textContent = "خطا در بارگذاری تقویم"; return; }
+    const response = await fetch("/api/calendar?year=" + state.year + "&month=" + state.month, {
+      headers: {"Accept": "application/json"}
+    });
+    if (!response.ok) {
+      $("cal-title").textContent = "خطا در بارگذاری تقویم";
+      return;
+    }
     const data = await response.json();
     $("cal-title").textContent = data.month_name + " " + fa(data.year);
     const days = $("cal-days");
-    days.innerHTML = "";
+    days.replaceChildren();
+
     for (let i = 0; i < data.first_weekday; i++) {
       const blank = document.createElement("span");
       blank.className = "cal-empty";
       days.appendChild(blank);
     }
+
     for (let day = 1; day <= data.days; day++) {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "cal-day" + (state.year === data.year && state.month === data.month && state.day === day ? " selected" : "");
+      button.className = "cal-day" +
+        (state.year === data.year && state.month === data.month && state.day === day ? " selected" : "");
       button.textContent = fa(day);
       button.addEventListener("click", () => {
-        state.year = data.year; state.month = data.month; state.day = day;
-        syncValue(); renderCalendar(); calendar.hidden = true;
+        state.year = data.year;
+        state.month = data.month;
+        state.day = day;
+        showDate(state.year, state.month, state.day);
+        calendar.hidden = true;
       });
       days.appendChild(button);
     }
   }
+
   $("calendar-toggle").addEventListener("click", () => {
+    syncCalendarToTypedDate();
     calendar.hidden = !calendar.hidden;
-    if (!calendar.hidden) renderCalendar();
+    if (!calendar.hidden) renderCalendar().catch(() => {
+      $("cal-title").textContent = "خطا در بارگذاری تقویم";
+    });
   });
+
   $("cal-prev").addEventListener("click", () => {
     state.month--;
     if (state.month < 1) { state.month = 12; state.year--; }
-    state.day = 0; syncValue(); renderCalendar();
+    state.day = 0;
+    renderCalendar().catch(() => { $("cal-title").textContent = "خطا در بارگذاری تقویم"; });
   });
+
   $("cal-next").addEventListener("click", () => {
     state.month++;
     if (state.month > 12) { state.month = 1; state.year++; }
-    state.day = 0; syncValue(); renderCalendar();
+    state.day = 0;
+    renderCalendar().catch(() => { $("cal-title").textContent = "خطا در بارگذاری تقویم"; });
   });
-  clock.addEventListener("change", syncValue);
-  const form = document.querySelector('form[action="/orders"]');
-  form.addEventListener("submit", (event) => {
-    syncValue();
-    if (!hidden.value) { event.preventDefault(); calendar.hidden = false; }
-  });
-  syncValue();
+
+  display.addEventListener("input", syncCalendarToTypedDate);
 })();
 </script></body></html>`))
 
@@ -540,7 +581,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		next.ServeHTTP(w, r)
 	})
 }
