@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -32,6 +33,13 @@ type RabinSubmitResult struct {
 	OrderID string
 	Message string
 	Unknown bool
+}
+
+func rabinOrderAPICapable() bool {
+	enabled := strings.EqualFold(env("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "false"), "true")
+	buy := strings.TrimSpace(os.Getenv("RABIN_ORDER_SIDE_BUY_JSON"))
+	sell := strings.TrimSpace(os.Getenv("RABIN_ORDER_SIDE_SELL_JSON"))
+	return enabled && json.Valid([]byte(buy)) && json.Valid([]byte(sell))
 }
 
 func (c RabinOrderClient) Submit(ctx context.Context, token string, order Order, orderSideJSON string) (RabinSubmitResult, error) {
