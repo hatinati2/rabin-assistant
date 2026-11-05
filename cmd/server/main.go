@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	jalaali "github.com/jalaali/go-jalaali"
 )
 
 const (
@@ -142,6 +144,58 @@ var tehranLocation = func() *time.Location {
 
 func tehran() *time.Location { return tehranLocation }
 
+var persianDigitReplacer = strings.NewReplacer(
+	"۰", "0", "۱", "1", "۲", "2", "۳", "3", "۴", "4",
+	"۵", "5", "۶", "6", "۷", "7", "۸", "8", "۹", "9",
+	"٠", "0", "١", "1", "٢", "2", "٣", "3", "٤", "4",
+	"٥", "5", "٦", "6", "٧", "7", "٨", "8", "٩", "9",
+)
+
+func parseJalaliDateTime(raw string) (time.Time, error) {
+	raw = strings.TrimSpace(persianDigitReplacer.Replace(raw))
+	fields := strings.Fields(raw)
+	if len(fields) != 2 {
+		return time.Time{}, errors.New("فرمت تاریخ و ساعت باید مانند 1405/08/14 08:44:50 باشد")
+	}
+
+	dateParts := strings.FieldsFunc(fields[0], func(r rune) bool { return r == '/' || r == '-' })
+	if len(dateParts) != 3 {
+		return time.Time{}, errors.New("فرمت تاریخ شمسی نامعتبر است")
+	}
+	year, errY := strconv.Atoi(dateParts[0])
+	month, errM := strconv.Atoi(dateParts[1])
+	day, errD := strconv.Atoi(dateParts[2])
+	if errY != nil || errM != nil || errD != nil || !jalaali.IsValidDate(year, month, day) {
+		return time.Time{}, errors.New("تاریخ شمسی معتبر نیست")
+	}
+
+	timeParts := strings.Split(fields[1], ":")
+	if len(timeParts) != 3 {
+		return time.Time{}, errors.New("ساعت باید شامل ساعت، دقیقه و ثانیه باشد")
+	}
+	hour, errH := strconv.Atoi(timeParts[0])
+	minute, errMin := strconv.Atoi(timeParts[1])
+	second, errSec := strconv.Atoi(timeParts[2])
+	if errH != nil || errMin != nil || errSec != nil ||
+		hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 {
+		return time.Time{}, errors.New("ساعت واردشده معتبر نیست")
+	}
+
+	gy, gm, gd, err := jalaali.ToGregorian(year, jalaali.Month(month), day)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("تبدیل تاریخ شمسی: %w", err)
+	}
+	return time.Date(gy, gm, gd, hour, minute, second, 0, tehran()), nil
+}
+
+func formatJalaliDateTime(t time.Time) string {
+	formatted, err := jalaali.From(t.In(tehran())).JFormat("2006/01/02 15:04:05")
+	if err != nil {
+		return t.In(tehran()).Format("2006/01/02 15:04:05")
+	}
+	return formatted
+}
+
 var symbolPattern = regexp.MustCompile(`^[\p{L}\p{N}._-]{1,24}$`)
 
 func validateOrder(r *http.Request, now time.Time) (Order, error) {
@@ -164,14 +218,9 @@ func validateOrder(r *http.Request, now time.Time) (Order, error) {
 	if quantityErr != nil || quantity <= 0 {
 		return Order{}, errors.New("تعداد باید عدد صحیح مثبت باشد")
 	}
-	rawExecuteAt := strings.TrimSpace(r.FormValue("execute_at"))
-	executeAt, err := time.ParseInLocation("2006-01-02T15:04:05", rawExecuteAt, tehran())
-	if err != nil {
-		// Backward compatibility with browsers/forms that omit seconds.
-		executeAt, err = time.ParseInLocation("2006-01-02T15:04", rawExecuteAt, tehran())
-	}
+	executeAt, err := parseJalaliDateTime(r.FormValue("execute_at"))
 	if err != nil || !executeAt.After(now) {
-		return Order{}, errors.New("تاریخ و ساعت باید معتبر و در آینده باشند")
+		return Order{}, errors.New("تاریخ شمسی یا ساعت معتبر نیست، یا زمان باید در آینده باشد؛ نمونه: ۱۴۰۵/۰۸/۱۴ ۰۸:۴۴:۵۰")
 	}
 	return Order{
 		ID:        fmt.Sprintf("%d", now.UnixNano()),
@@ -192,7 +241,9 @@ type PageData struct {
 	Now          string
 }
 
-var page = template.Must(template.New("page").Parse(`<!doctype html>
+var page = template.Must(template.New("page").Funcs(template.FuncMap{
+	"jalali": formatJalaliDateTime,
+}).Parse(`<!doctype html>
 <html lang="fa" dir="rtl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>دستیار رابین</title>
@@ -222,13 +273,13 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 <label>نوع سفارش</label><select name="side"><option value="buy">خرید</option><option value="sell">فروش</option></select>
 <label>قیمت (ریال)</label><input name="price" type="number" min="1" step="1" required>
 <label>تعداد</label><input name="quantity" type="number" min="1" step="1" required>
-<label>تاریخ و ساعت اجرا (تهران، با دقت ثانیه)</label><input name="execute_at" type="datetime-local" step="1" required>
+<label>تاریخ شمسی و ساعت ایران</label><input name="execute_at" type="text" inputmode="numeric" dir="ltr" placeholder="۱۴۰۵/۰۸/۱۴ ۰۸:۴۴:۵۰" pattern="[0-9۰-۹٠-٩]{4}[/.-][0-9۰-۹٠-٩]{1,2}[/.-][0-9۰-۹٠-٩]{1,2}[ ]+[0-9۰-۹٠-٩]{1,2}:[0-9۰-۹٠-٩]{2}:[0-9۰-۹٠-٩]{2}" required>
 <button class="submit" type="submit">ذخیره سفارش</button></form>
 <div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود.</div></section>
 <section class="card"><h2>سفارش‌ها ({{len .Orders}})</h2><div class="tablewrap"><table>
 <thead><tr><th>نماد</th><th>نوع</th><th>قیمت</th><th>تعداد</th><th>زمان تهران</th><th>وضعیت</th><th></th></tr></thead><tbody>
 {{range .Orders}}<tr><td><b>{{.Symbol}}</b></td><td>{{if eq .Side "buy"}}<span class="buy">خرید</span>{{else}}<span class="sell">فروش</span>{{end}}</td>
-<td>{{.Price}}</td><td>{{.Quantity}}</td><td>{{.ExecuteAt.Format "2006-01-02 15:04:05"}}</td>
+<td>{{.Price}}</td><td>{{.Quantity}}</td><td>{{jalali .ExecuteAt}}</td>
 <td>{{if eq .Status "scheduled"}}<span class="status scheduled">زمان‌بندی‌شده</span>{{else if eq .Status "ready"}}<span class="status ready">آماده بررسی</span>{{else}}<span class="status cancelled">لغوشده</span>{{end}}</td>
 <td>{{if eq .Status "scheduled"}}<form method="post" action="/orders/cancel"><input type="hidden" name="id" value="{{.ID}}"><button class="cancel">لغو</button></form>{{else}}—{{end}}</td></tr>
 {{else}}<tr><td colspan="7" class="empty">هنوز سفارشی ثبت نشده است.</td></tr>{{end}}
@@ -264,7 +315,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		data := PageData{Orders: store.snapshot(), Now: time.Now().In(tehran()).Format("2006-01-02 15:04:05")}
+		data := PageData{Orders: store.snapshot(), Now: formatJalaliDateTime(time.Now().In(tehran()))}
 		switch r.URL.Query().Get("notice") {
 		case "saved":
 			data.Notice = "سفارش ذخیره شد."
@@ -322,7 +373,7 @@ func renderError(w http.ResponseWriter, store *Store, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = page.Execute(w, PageData{
 		Orders: store.snapshot(), Error: message,
-		Now: time.Now().In(tehran()).Format("2006-01-02 15:04:05"),
+		Now: formatJalaliDateTime(time.Now().In(tehran())),
 	})
 }
 
