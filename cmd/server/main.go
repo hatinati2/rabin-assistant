@@ -434,7 +434,7 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 <div class="note"><b>دو مسیر اجرا:</b> مسیر «بدون API» سفارش را برای ثبت دستی آماده می‌کند. مسیر «با API» فقط در صورت فعال‌سازی صریح در تنظیمات سرور، وجود نشست معتبر و ثبت ISIN، در زمان مقرر یک درخواست سفارش عادی به رابین ارسال می‌کند. در صورت نامشخص بودن نتیجه ارسال، سیستم سفارش را خودکار تکرار نمی‌کند.</div>
 {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="msg">{{.Notice}}</div>{{end}}
 <div class="grid{{if .History}} history{{end}}">{{if not .History}}<section class="card"><h2>تعریف سفارش</h2>
-<form method="post" action="/orders"><label>مسیر ثبت سفارش</label><select id="execution-mode" name="execution_mode"><option value="manual" selected>بدون API — ثبت دستی در رابین</option><option value="api" {{if not .APIAvailable}}disabled{{end}}>با API — ارسال عادی به رابین</option></select>
+<form id="order-form" method="post" action="/orders"><label>مسیر ثبت سفارش</label><select id="execution-mode" name="execution_mode"><option value="manual" selected>بدون API — ثبت دستی در رابین</option><option value="api" {{if not .APIAvailable}}disabled{{end}}>با API — ارسال عادی به رابین</option></select>
 <label>نماد نمایشی</label><input name="symbol" maxlength="24" placeholder="مثلاً خودرو" required>
 <label>شناسه ISIN (فقط برای مسیر API)</label><input id="order-isin" name="isin" maxlength="12" minlength="12" pattern="[A-Za-z]{2}[A-Za-z0-9]{9}[0-9]" placeholder="مثلاً IR..." autocomplete="off">
 <label>نوع سفارش</label><select name="side"><option value="buy">خرید</option><option value="sell">فروش</option></select>
@@ -491,6 +491,17 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
   if (executionMode) {
     executionMode.addEventListener("change", syncExecutionMode);
     syncExecutionMode();
+  }
+  const orderForm = $("order-form");
+  if (orderForm) {
+    orderForm.addEventListener("submit", (event) => {
+      if (executionMode && executionMode.value === "api") {
+        const accepted = window.confirm(
+          "این گزینه یک سفارش واقعی عادی را به کارگزاری رابین می‌فرستد. اگر کارگزاری آن را در تعطیلی بپذیرد، ممکن است در اولین زمان مجاز بازار اجرا شود. آیا ثبت این سفارش زمان‌بندی‌شده را تأیید می‌کنید؟"
+        );
+        if (!accepted) event.preventDefault();
+      }
+    });
   }
 
   function parseTypedDate() {
