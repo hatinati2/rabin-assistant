@@ -22,9 +22,12 @@ import (
 )
 
 const (
-	statusScheduled = "scheduled"
-	statusReady     = "ready"
-	statusCancelled = "cancelled"
+	statusScheduled     = "scheduled"
+	statusReady         = "ready"
+	statusCancelled     = "cancelled"
+	statusManualDone    = "manual_done"
+	executionModeManual = "manual"
+	executionModeAPI    = "api"
 )
 
 type Order struct {
@@ -33,8 +36,9 @@ type Order struct {
 	Side      string    `json:"side"`
 	Price     int64     `json:"price"`
 	Quantity  int64     `json:"quantity"`
-	ExecuteAt time.Time `json:"execute_at"`
-	Status    string    `json:"status"`
+	ExecuteAt     time.Time `json:"execute_at"`
+	ExecutionMode string    `json:"execution_mode,omitempty"`
+	Status        string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -100,6 +104,32 @@ func (s *Store) add(order Order) error {
 		return err
 	}
 	return nil
+}
+
+func (s *Store) confirmManual(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.orders {
+		if s.orders[i].ID != id {
+			continue
+		}
+		mode := s.orders[i].ExecutionMode
+		if mode == "" {
+			mode = executionModeManual
+		}
+		if mode != executionModeManual || s.orders[i].Status != statusReady {
+			return errors.New("فقط سفارش آماده در مسیر بدون API قابل تأیید دستی است")
+		}
+		old := s.orders[i]
+		s.orders[i].Status = statusManualDone
+		s.orders[i].UpdatedAt = time.Now().In(tehran())
+		if err := s.saveLocked(); err != nil {
+			s.orders[i] = old
+			return err
+		}
+		return nil
+	}
+	return errors.New("سفارش پیدا نشد")
 }
 
 func (s *Store) cancel(id string) error {
@@ -237,6 +267,17 @@ func formatJalaliDateTime(t time.Time) string {
 	return formatted + "٫" + persianMillis
 }
 
+func executionModeLabel(mode string) string {
+	if mode == executionModeAPI {
+		return "با API"
+	}
+	return "بدون API"
+}
+
+func isManualExecution(mode string) bool {
+	return mode == "" || mode == executionModeManual
+}
+
 var symbolPattern = regexp.MustCompile(`^[\p{L}\p{N}._-]{1,24}$`)
 
 func validateOrder(r *http.Request, now time.Time) (Order, error) {
@@ -245,6 +286,16 @@ func validateOrder(r *http.Request, now time.Time) (Order, error) {
 	}
 	symbol := strings.TrimSpace(r.FormValue("symbol"))
 	side := r.FormValue("side")
+	executionMode := strings.TrimSpace(r.FormValue("execution_mode"))
+	if executionMode == "" {
+		executionMode = executionModeManual
+	}
+	if executionMode == executionModeAPI {
+		return Order{}, errors.New("مسیر با API هنوز فعال نشده است؛ فعلاً مسیر بدون API را انتخاب کنید")
+	}
+	if executionMode != executionModeManual {
+		return Order{}, errors.New("مسیر اجرای سفارش معتبر نیست")
+	}
 	price, priceErr := strconv.ParseInt(r.FormValue("price"), 10, 64)
 	quantity, quantityErr := strconv.ParseInt(r.FormValue("quantity"), 10, 64)
 	if !symbolPattern.MatchString(symbol) {
@@ -277,8 +328,9 @@ func validateOrder(r *http.Request, now time.Time) (Order, error) {
 		Side:      side,
 		Price:     price,
 		Quantity:  quantity,
-		ExecuteAt: executeAt,
-		Status:    statusScheduled,
+		ExecuteAt:     executeAt,
+		ExecutionMode: executionMode,
+		Status:        statusScheduled,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}, nil
@@ -331,7 +383,9 @@ func buildCalendar(year, month int) (CalendarResponse, error) {
 }
 
 var page = template.Must(template.New("page").Funcs(template.FuncMap{
-	"jalali": formatJalaliDateTime,
+	"jalali":        formatJalaliDateTime,
+	"executionMode": executionModeLabel,
+	"manualMode":    isManualExecution,
 }).Parse(`<!doctype html>
 <html lang="fa" dir="rtl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -357,10 +411,11 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 @media(max-width:800px){.grid{grid-template-columns:1fr}.head{align-items:flex-start;gap:10px;flex-direction:column}}
 </style></head><body data-jyear="{{.JYear}}" data-jmonth="{{.JMonth}}" data-jday="{{.JDay}}"><main class="wrap">
 <div class="head"><div><h1>دستیار رابین</h1><div class="muted" style="margin-top:7px">مدیریت سفارش‌ها · ساعت تهران</div></div><div class="nav"><a class="{{if not .History}}active{{end}}" href="/">سفارش‌های فعال</a><a class="{{if .History}}active{{end}}" href="/history">تاریخچه</a></div><span class="tag">نسخه اول · بدون اتصال به کارگزاری</span></div>
-<div class="note"><b>حالت آماده‌سازی:</b> این نسخه سفارش را ذخیره می‌کند و در زمان مقرر به «آماده بررسی» تغییر وضعیت می‌دهد. هیچ ورود به حساب رابین و هیچ سفارش واقعی ارسال نمی‌شود.</div>
+<div class="note"><b>دو مسیر مستقل:</b> مسیر «بدون API» فعلاً فعال است؛ پس از رسیدن موعد، سفارش برای ثبت دستی در رابین آماده می‌شود. بعد از ثبت توسط خودت، می‌توانی آن را تأیید کنی. مسیر «با API» جدا نگه داشته شده اما تا زمان داشتن API و پیاده‌سازی اتصال، غیرفعال است. این پنل به‌تنهایی سفارش واقعی ارسال نمی‌کند.</div>
 {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="msg">{{.Notice}}</div>{{end}}
 <div class="grid{{if .History}} history{{end}}">{{if not .History}}<section class="card"><h2>تعریف سفارش</h2>
-<form method="post" action="/orders"><label>نماد</label><input name="symbol" maxlength="24" placeholder="مثلاً خودرو" required>
+<form method="post" action="/orders"><label>مسیر ثبت سفارش</label><select name="execution_mode"><option value="manual" selected>بدون API — ثبت دستی در رابین (فعال)</option><option value="api" disabled>با API — فعلاً غیرفعال</option></select>
+<label>نماد</label><input name="symbol" maxlength="24" placeholder="مثلاً خودرو" required>
 <label>نوع سفارش</label><select name="side"><option value="buy">خرید</option><option value="sell">فروش</option></select>
 <label>قیمت (ریال)</label><input name="price" type="number" min="1" step="1" required>
 <label>تعداد</label><input name="quantity" type="number" min="1" step="1" required>
@@ -377,12 +432,12 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 <button class="submit" type="submit">ذخیره سفارش</button></form>
 <div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود.</div></section>{{end}}
 <section class="card"><h2>{{if .History}}تاریخچه سفارش‌ها{{else}}سفارش‌های فعال{{end}} ({{len .Orders}})</h2><div class="tablewrap"><table>
-<thead><tr><th>نماد</th><th>نوع</th><th>قیمت</th><th>تعداد</th><th>زمان تهران</th><th>وضعیت</th>{{if not .History}}<th></th>{{end}}</tr></thead><tbody>
+<thead><tr><th>نماد</th><th>نوع</th><th>قیمت</th><th>تعداد</th><th>زمان تهران</th><th>مسیر</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>
 {{range .Orders}}<tr><td><b>{{.Symbol}}</b></td><td>{{if eq .Side "buy"}}<span class="buy">خرید</span>{{else}}<span class="sell">فروش</span>{{end}}</td>
-<td>{{.Price}}</td><td>{{.Quantity}}</td><td>{{jalali .ExecuteAt}}</td>
-<td>{{if eq .Status "scheduled"}}<span class="status scheduled">زمان‌بندی‌شده</span>{{else if eq .Status "ready"}}<span class="status ready">آماده بررسی</span>{{else}}<span class="status cancelled">لغوشده</span>{{end}}</td>
-{{if not $.History}}<td>{{if eq .Status "scheduled"}}<form method="post" action="/orders/cancel"><input type="hidden" name="id" value="{{.ID}}"><button class="cancel">لغو</button></form>{{else}}—{{end}}</td>{{end}}</tr>
-{{else}}<tr><td colspan="{{if .History}}6{{else}}7{{end}}" class="empty">{{if .History}}هنوز موردی در تاریخچه ثبت نشده است.{{else}}سفارش فعالی ثبت نشده است.{{end}}</td></tr>{{end}}
+<td>{{.Price}}</td><td>{{.Quantity}}</td><td>{{jalali .ExecuteAt}}</td><td>{{executionMode .ExecutionMode}}</td>
+<td>{{if eq .Status "scheduled"}}<span class="status scheduled">زمان‌بندی‌شده</span>{{else if eq .Status "ready"}}<span class="status ready">آماده بررسی</span>{{else if eq .Status "manual_done"}}<span class="status ready">ثبت دستی تأیید شد</span>{{else}}<span class="status cancelled">لغوشده</span>{{end}}</td>
+<td>{{if eq .Status "scheduled"}}<form method="post" action="/orders/cancel"><input type="hidden" name="id" value="{{.ID}}"><button class="cancel">لغو</button></form>{{else if and $.History (eq .Status "ready") (manualMode .ExecutionMode)}}<form method="post" action="/orders/manual-confirm" onsubmit="return confirm('آیا سفارش را شخصاً در سامانه رابین ثبت کرده‌ای؟')"><input type="hidden" name="id" value="{{.ID}}"><button class="submit">ثبت دستی انجام شد</button></form>{{else}}—{{end}}</td></tr>
+{{else}}<tr><td colspan="8" class="empty">{{if .History}}هنوز موردی در تاریخچه ثبت نشده است.{{else}}سفارش فعالی ثبت نشده است.{{end}}</td></tr>{{end}}
 </tbody></table></div><div class="foot">{{if .History}}این صفحه سفارش‌های سررسیدشده و لغوشده را نگه می‌دارد؛ هیچ سفارشی از داده‌ها حذف نشده است.{{else}}ساعت سرور: {{.Now}} · سفارش‌های سررسیدشده در صفحه تاریخچه نمایش داده می‌شوند.{{end}} وضعیت «آماده بررسی» به معنی ارسال به کارگزاری نیست.</div>
 </section></div></main>
 <script>
@@ -544,6 +599,8 @@ func main() {
 			data.Notice = "سفارش ذخیره شد."
 		case "cancelled":
 			data.Notice = "سفارش لغو شد."
+		case "manual_confirmed":
+			data.Notice = "تأیید دستی ثبت شد. این تأیید به معنی راستی‌آزمایی خودکار کارگزاری نیست."
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := page.Execute(w, data); err != nil {
@@ -572,6 +629,21 @@ func main() {
 			return
 		}
 		http.Redirect(w, r, "/?notice=saved", http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /orders/manual-confirm", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "درخواست نامعتبر", http.StatusForbidden)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "فرم نامعتبر است", http.StatusBadRequest)
+			return
+		}
+		if err := store.confirmManual(r.FormValue("id")); err != nil {
+			renderError(w, store, err.Error())
+			return
+		}
+		http.Redirect(w, r, "/history?notice=manual_confirmed", http.StatusSeeOther)
 	})
 	mux.HandleFunc("POST /orders/cancel", func(w http.ResponseWriter, r *http.Request) {
 		if !sameOrigin(r) {
