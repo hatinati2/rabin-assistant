@@ -15,14 +15,16 @@ PATTERNS = [
     ("bearer_literal", r"Bearer\s"),
     ("access_token_reference", r"accessToken"),
     ("token_storage_reference", r"localStorage\.(?:getItem|setItem)\s*\("),
-    ("order_endpoint", r"[\\"']\/order[\\"']"),
+    ("order_endpoint", r"/order"),
     ("order_side_payload", r"orderSide\s*:"),
     ("validity_type_reference", r"validityType\s*:"),
 ]
 
+
 def clean_url(raw):
-    p = urlsplit(raw)
-    return urlunsplit((p.scheme, p.netloc, p.path, "", ""))
+    parsed = urlsplit(raw)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
 
 def main():
     try:
@@ -41,17 +43,18 @@ def main():
     }
 
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
             try:
                 context = browser.new_context(locale="fa-IR", timezone_id="Asia/Tehran")
                 page = context.new_page()
                 response = page.goto(TARGET, wait_until="domcontentloaded", timeout=60000)
                 page.wait_for_timeout(3000)
-                urls = page.evaluate("""() => [...new Set([
+                urls = page.evaluate(r"""() => [...new Set([
                   ...[...document.scripts].map(s => s.src).filter(Boolean),
                   ...performance.getEntriesByType('resource')
-                    .filter(e => /\.m?js(?:[?#]|$)/i.test(e.name)).map(e => e.name)
+                    .filter(e => /\.m?js(?:[?#]|$)/i.test(e.name))
+                    .map(e => e.name)
                 ])].map(raw => {
                   try {
                     const u = new URL(raw, location.href);
@@ -104,6 +107,7 @@ def main():
 
     print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
     return 0 if result["ok"] else 1
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
