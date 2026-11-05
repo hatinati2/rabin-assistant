@@ -351,3 +351,77 @@ func marketSymbolLookupHandler(catalog *MarketSymbolCatalog) http.HandlerFunc {
 		_ = json.NewEncoder(w).Encode(item)
 	}
 }
+
+
+const marketSymbolSuggestionLimit = 12
+
+// suggestMarketSymbols ranks ticker-prefix matches first, then ticker substring
+// matches, followed by company-name prefix/substring matches.
+func suggestMarketSymbols(symbols []MarketSymbol, query string, limit int) []MarketSymbol {
+	normalized := normalizeMarketSymbol(query)
+	if normalized == "" {
+		return []MarketSymbol{}
+	}
+	if limit < 1 || limit > 20 {
+		limit = marketSymbolSuggestionLimit
+	}
+
+	type rankedSymbol struct {
+		item  MarketSymbol
+		rank  int
+		key   string
+	}
+	ranked := make([]rankedSymbol, 0)
+	for _, item := range symbols {
+		ticker := normalizeMarketSymbol(item.Symbol)
+		company := normalizeMarketSymbol(item.CompanyName)
+		rank := -1
+		switch {
+		case strings.HasPrefix(ticker, normalized):
+			rank = 0
+		case strings.Contains(ticker, normalized):
+			rank = 1
+		case company != "" && strings.HasPrefix(company, normalized):
+			rank = 2
+		case company != "" && strings.Contains(company, normalized):
+			rank = 3
+		}
+		if rank >= 0 {
+			ranked = append(ranked, rankedSymbol{item: item, rank: rank, key: ticker})
+		}
+	}
+
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].rank != ranked[j].rank {
+			return ranked[i].rank < ranked[j].rank
+		}
+		if ranked[i].key != ranked[j].key {
+			return ranked[i].key < ranked[j].key
+		}
+		return ranked[i].item.ISIN < ranked[j].item.ISIN
+	})
+
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	result := make([]MarketSymbol, 0, len(ranked))
+	for _, entry := range ranked {
+		result = append(result, entry.item)
+	}
+	return result
+}
+
+func marketSymbolSuggestHandler(catalog *MarketSymbolCatalog) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		query := strings.TrimSpace(r.URL.Query().Get("q"))
+		if query == "" {
+			http.Error(w, "حداقل یک حرف برای جست‌وجو وارد کنید", http.StatusBadRequest)
+			return
+		}
+		symbols, _, _ := catalog.Snapshot()
+		suggestions := suggestMarketSymbols(symbols, query, marketSymbolSuggestionLimit)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(suggestions)
+	}
+}
