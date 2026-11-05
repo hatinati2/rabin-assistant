@@ -703,7 +703,7 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
       if (field && typeof draft[name] === "string") field.value = draft[name];
     }
     const execute = String(draft.execute_at || "");
-    const parts = execute.trim().split(/\\s+/);
+    const parts = execute.trim().split(/\s+/);
     if (parts.length === 2) {
       if (display) display.value = parts[0];
       const timeField = $("execute-time");
