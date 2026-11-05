@@ -236,9 +236,48 @@ func validateOrder(r *http.Request, now time.Time) (Order, error) {
 }
 
 type PageData struct {
-	Orders       []Order
+	Orders        []Order
 	Error, Notice string
-	Now          string
+	Now           string
+	JYear         int
+	JMonth        int
+	JDay          int
+}
+
+func currentJalaliParts(t time.Time) (int, int, int) {
+	y, m, d, err := jalaali.ToJalaali(t.In(tehran()).Year(), t.In(tehran()).Month(), t.In(tehran()).Day())
+	if err != nil {
+		return 1405, 1, 1
+	}
+	return y, int(m), d
+}
+
+type CalendarResponse struct {
+	Year         int    `json:"year"`
+	Month        int    `json:"month"`
+	MonthName    string `json:"month_name"`
+	Days         int    `json:"days"`
+	FirstWeekday int    `json:"first_weekday"`
+}
+
+func buildCalendar(year, month int) (CalendarResponse, error) {
+	if month < 1 || month > 12 || year < 1 || year > 3177 || !jalaali.IsValidDate(year, month, 1) {
+		return CalendarResponse{}, errors.New("ماه یا سال شمسی نامعتبر است")
+	}
+	days, err := jalaali.MonthLength(year, month)
+	if err != nil {
+		return CalendarResponse{}, err
+	}
+	gy, gm, gd, err := jalaali.ToGregorian(year, jalaali.Month(month), 1)
+	if err != nil {
+		return CalendarResponse{}, err
+	}
+	weekday := int(jalaali.From(time.Date(gy, gm, gd, 0, 0, 0, 0, tehran())).Weekday())
+	return CalendarResponse{
+		Year: year, Month: month,
+		MonthName: jalaali.Month(month).String(),
+		Days: days, FirstWeekday: weekday,
+	}, nil
 }
 
 var page = template.Must(template.New("page").Funcs(template.FuncMap{
@@ -263,8 +302,9 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 .scheduled{background:#eff8ff;color:#175cd3}.ready{background:#fffaeb;color:#b54708}.cancelled{background:#f2f4f7;color:#475467}
 .buy{color:#067647;font-weight:bold}.sell{color:#b42318;font-weight:bold}.empty{text-align:center;color:#667085;padding:28px}
 .foot{font-size:12px;line-height:1.8;margin-top:12px}
+.datebox{position:relative}.datebar{display:flex;gap:8px}.datebar input{flex:1}.datebar button{white-space:nowrap}.calendar{margin-top:8px;padding:12px;border:1px solid #d0d5dd;border-radius:10px;background:#fff}.cal-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}.cal-nav{background:#f2f4f7;color:#344054;padding:7px 10px}.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;text-align:center}.cal-grid span{padding:7px 0;color:#667085;font-size:12px}.cal-day{background:#f8fafc;color:#182230;padding:9px 2px;border-radius:7px}.cal-day:hover,.cal-day.selected{background:#175cd3;color:#fff}.cal-day.today{outline:2px solid #84adff}.cal-empty{min-height:34px}
 @media(max-width:800px){.grid{grid-template-columns:1fr}.head{align-items:flex-start;gap:10px;flex-direction:column}}
-</style></head><body><main class="wrap">
+</style></head><body data-jyear="{{.JYear}}" data-jmonth="{{.JMonth}}" data-jday="{{.JDay}}"><main class="wrap">
 <div class="head"><div><h1>دستیار رابین</h1><div class="muted" style="margin-top:7px">مدیریت سفارش‌ها · ساعت تهران</div></div><span class="tag">نسخه اول · بدون اتصال به کارگزاری</span></div>
 <div class="note"><b>حالت آماده‌سازی:</b> این نسخه سفارش را ذخیره می‌کند و در زمان مقرر به «آماده بررسی» تغییر وضعیت می‌دهد. هیچ ورود به حساب رابین و هیچ سفارش واقعی ارسال نمی‌شود.</div>
 {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="msg">{{.Notice}}</div>{{end}}
@@ -273,7 +313,17 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 <label>نوع سفارش</label><select name="side"><option value="buy">خرید</option><option value="sell">فروش</option></select>
 <label>قیمت (ریال)</label><input name="price" type="number" min="1" step="1" required>
 <label>تعداد</label><input name="quantity" type="number" min="1" step="1" required>
-<label>تاریخ شمسی و ساعت ایران</label><input name="execute_at" type="text" inputmode="numeric" dir="ltr" placeholder="۱۴۰۵/۰۸/۱۴ ۰۸:۴۴:۵۰" pattern="[0-9۰-۹٠-٩]{4}[/.-][0-9۰-۹٠-٩]{1,2}[/.-][0-9۰-۹٠-٩]{1,2}[ ]+[0-9۰-۹٠-٩]{1,2}:[0-9۰-۹٠-٩]{2}:[0-9۰-۹٠-٩]{2}" required>
+<label>تاریخ شمسی</label>
+<div class="datebox">
+  <div class="datebar"><input id="jalali-date-display" type="text" value="" placeholder="انتخاب تاریخ شمسی" readonly required><button type="button" id="calendar-toggle">تقویم</button></div>
+  <input name="execute_at" id="execute_at" type="hidden" required>
+  <div id="jalali-calendar" class="calendar" hidden>
+    <div class="cal-head"><button type="button" id="cal-prev" class="cal-nav">ماه قبل</button><strong id="cal-title">تقویم شمسی</strong><button type="button" id="cal-next" class="cal-nav">ماه بعد</button></div>
+    <div class="cal-grid" id="cal-weekdays"><span>ش</span><span>ی</span><span>د</span><span>س</span><span>چ</span><span>پ</span><span>ج</span></div>
+    <div class="cal-grid" id="cal-days"></div>
+  </div>
+</div>
+<label>ساعت اجرا (تهران)</label><input id="execute-time" type="time" step="1" value="08:44:50" required>
 <button class="submit" type="submit">ذخیره سفارش</button></form>
 <div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود.</div></section>
 <section class="card"><h2>سفارش‌ها ({{len .Orders}})</h2><div class="tablewrap"><table>
@@ -284,7 +334,71 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 <td>{{if eq .Status "scheduled"}}<form method="post" action="/orders/cancel"><input type="hidden" name="id" value="{{.ID}}"><button class="cancel">لغو</button></form>{{else}}—{{end}}</td></tr>
 {{else}}<tr><td colspan="7" class="empty">هنوز سفارشی ثبت نشده است.</td></tr>{{end}}
 </tbody></table></div><div class="foot">ساعت سرور: {{.Now}} · وضعیت «آماده بررسی» به معنی ارسال به کارگزاری نیست.</div>
-</section></div></main></body></html>`))
+</section></div></main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const state = { year: Number(document.body.dataset.jyear), month: Number(document.body.dataset.jmonth), day: Number(document.body.dataset.jday) };
+  const fa = (value) => String(value).replace(/[0-9]/g, d => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
+  const pad = (value) => String(value).padStart(2, "0");
+  const hidden = $("execute_at");
+  const display = $("jalali-date-display");
+  const clock = $("execute-time");
+  const calendar = $("jalali-calendar");
+
+  function syncValue() {
+    if (!state.day) { hidden.value = ""; display.value = ""; return; }
+    const date = state.year + "/" + pad(state.month) + "/" + pad(state.day);
+    display.value = fa(date);
+    hidden.value = date + " " + (clock.value || "08:44:50");
+  }
+  async function renderCalendar() {
+    const response = await fetch("/api/calendar?year=" + state.year + "&month=" + state.month, {headers: {"Accept":"application/json"}});
+    if (!response.ok) { $("cal-title").textContent = "خطا در بارگذاری تقویم"; return; }
+    const data = await response.json();
+    $("cal-title").textContent = data.month_name + " " + fa(data.year);
+    const days = $("cal-days");
+    days.innerHTML = "";
+    for (let i = 0; i < data.first_weekday; i++) {
+      const blank = document.createElement("span");
+      blank.className = "cal-empty";
+      days.appendChild(blank);
+    }
+    for (let day = 1; day <= data.days; day++) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "cal-day" + (state.year === data.year && state.month === data.month && state.day === day ? " selected" : "");
+      button.textContent = fa(day);
+      button.addEventListener("click", () => {
+        state.year = data.year; state.month = data.month; state.day = day;
+        syncValue(); renderCalendar(); calendar.hidden = true;
+      });
+      days.appendChild(button);
+    }
+  }
+  $("calendar-toggle").addEventListener("click", () => {
+    calendar.hidden = !calendar.hidden;
+    if (!calendar.hidden) renderCalendar();
+  });
+  $("cal-prev").addEventListener("click", () => {
+    state.month--;
+    if (state.month < 1) { state.month = 12; state.year--; }
+    state.day = 0; syncValue(); renderCalendar();
+  });
+  $("cal-next").addEventListener("click", () => {
+    state.month++;
+    if (state.month > 12) { state.month = 1; state.year++; }
+    state.day = 0; syncValue(); renderCalendar();
+  });
+  clock.addEventListener("change", syncValue);
+  const form = document.querySelector('form[action="/orders"]');
+  form.addEventListener("submit", (event) => {
+    syncValue();
+    if (!hidden.value) { event.preventDefault(); calendar.hidden = false; }
+  });
+  syncValue();
+})();
+</script></body></html>`))
 
 func main() {
 	user, pass := os.Getenv("RABIN_ADMIN_USER"), os.Getenv("RABIN_ADMIN_PASS")
@@ -314,8 +428,26 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/calendar", func(w http.ResponseWriter, r *http.Request) {
+		year, errY := strconv.Atoi(r.URL.Query().Get("year"))
+		month, errM := strconv.Atoi(r.URL.Query().Get("month"))
+		if errY != nil || errM != nil {
+			http.Error(w, "سال و ماه شمسی نامعتبر است", http.StatusBadRequest)
+			return
+		}
+		data, err := buildCalendar(year, month)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(data)
+	})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		data := PageData{Orders: store.snapshot(), Now: formatJalaliDateTime(time.Now().In(tehran()))}
+		now := time.Now().In(tehran())
+		year, month, day := currentJalaliParts(now)
+		data := PageData{Orders: store.snapshot(), Now: formatJalaliDateTime(now), JYear: year, JMonth: month, JDay: day}
 		switch r.URL.Query().Get("notice") {
 		case "saved":
 			data.Notice = "سفارش ذخیره شد."
@@ -374,6 +506,9 @@ func renderError(w http.ResponseWriter, store *Store, message string) {
 	_ = page.Execute(w, PageData{
 		Orders: store.snapshot(), Error: message,
 		Now: formatJalaliDateTime(time.Now().In(tehran())),
+		JYear: func() int { y, _, _ := currentJalaliParts(time.Now().In(tehran())); return y }(),
+		JMonth: func() int { _, m, _ := currentJalaliParts(time.Now().In(tehran())); return m }(),
+		JDay: func() int { _, _, d := currentJalaliParts(time.Now().In(tehran())); return d }(),
 	})
 }
 
