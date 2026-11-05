@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -619,6 +620,8 @@ func main() {
 			notice = "اطلاعات ورود رابین به‌صورت رمزنگاری‌شده ذخیره شد."
 		} else if r.URL.Query().Get("notice") == "rabin_deleted" {
 			notice = "اطلاعات ورود رابین حذف شد."
+		} else if r.URL.Query().Get("notice") == "rabin_login_ok" {
+			notice = "ورود عادی به رابین موفق بود و نشست رمزنگاری‌شده ذخیره شد."
 		}
 		credentials.Render(w, "", notice)
 	})
@@ -648,6 +651,34 @@ func main() {
 			return
 		}
 		http.Redirect(w, r, "/settings?notice=rabin_deleted", http.StatusSeeOther)
+	})
+
+	mux.HandleFunc("POST /settings/rabin-login", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "درخواست نامعتبر", http.StatusForbidden)
+			return
+		}
+		username, password, err := credentials.Load()
+		if err != nil {
+			credentials.Render(w, "خواندن اطلاعات ورود ذخیره‌شده ممکن نشد.", "")
+			return
+		}
+		if username == "" || password == "" {
+			credentials.Render(w, "ابتدا نام کاربری و رمز عبور رابین را ذخیره کنید.", "")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 13*time.Second)
+		defer cancel()
+		token, err := (RabinLoginClient{}).Login(ctx, username, password)
+		if err != nil {
+			credentials.Render(w, err.Error(), "")
+			return
+		}
+		if err := credentials.SaveAccessToken(token); err != nil {
+			credentials.Render(w, "ورود موفق بود، اما ذخیره امن نشست انجام نشد.", "")
+			return
+		}
+		http.Redirect(w, r, "/settings?notice=rabin_login_ok", http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /history", func(w http.ResponseWriter, r *http.Request) {
 		renderOrdersPage(w, r, true)
