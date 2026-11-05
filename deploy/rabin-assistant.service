@@ -1,0 +1,26 @@
+[Unit]
+Description=Rabin Assistant local order scheduler
+After=network.target
+
+[Service]
+Type=simple
+User=rabin-assistant
+Group=rabin-assistant
+WorkingDirectory=/opt/rabin-assistant
+EnvironmentFile=/etc/rabin-assistant.env
+ExecStart=/opt/rabin-assistant/rabin-assistant
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/rabin-assistant
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target
