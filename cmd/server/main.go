@@ -70,6 +70,27 @@ func (s *Store) snapshot() []Order {
 	return out
 }
 
+func (s *Store) list(history bool) []Order {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Order, 0, len(s.orders))
+	for _, order := range s.orders {
+		if (order.Status != statusScheduled) == history {
+			out = append(out, order)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if history {
+			return out[i].ExecuteAt.After(out[j].ExecuteAt)
+		}
+		return out[i].ExecuteAt.Before(out[j].ExecuteAt)
+	})
+	return out
+}
+
+func (s *Store) activeSnapshot() []Order  { return s.list(false) }
+func (s *Store) historySnapshot() []Order { return s.list(true) }
+
 func (s *Store) add(order Order) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -270,6 +291,7 @@ type PageData struct {
 	JYear         int
 	JMonth        int
 	JDay          int
+	History       bool
 }
 
 func currentJalaliParts(t time.Time) (int, int, int) {
@@ -316,11 +338,12 @@ var page = template.Must(template.New("page").Funcs(template.FuncMap{
 <title>دستیار رابین</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f4f6fa;color:#182230;font:14px Tahoma,Arial}
-.wrap{max-width:1100px;margin:30px auto;padding:0 16px}.head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
+.wrap{max-width:1100px;margin:30px auto;padding:0 16px}.head{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:18px}
 h1{font-size:22px;margin:0}.muted,.foot{color:#667085}.tag{background:#eef4ff;color:#1849a9;border-radius:18px;padding:7px 10px;font-size:12px}
+.nav{display:flex;gap:7px;flex-wrap:wrap}.nav a{display:inline-block;padding:9px 12px;border:1px solid #d0d5dd;border-radius:9px;color:#344054;text-decoration:none;background:#fff}.nav a.active{background:#175cd3;color:#fff;border-color:#175cd3}
 .note,.msg{padding:12px;border-radius:9px;margin:12px 0;line-height:1.8}.note{background:#fffaeb;border:1px solid #fedf89;color:#93370d}
 .msg{background:#ecfdf3;color:#05603a}.err{background:#fef3f2;color:#b42318}
-.grid{display:grid;grid-template-columns:320px 1fr;gap:16px}.card{background:white;border:1px solid #e4e7ec;border-radius:13px;padding:17px;min-width:0}
+.grid{display:grid;grid-template-columns:320px 1fr;gap:16px}.grid.history{grid-template-columns:1fr}.card{background:white;border:1px solid #e4e7ec;border-radius:13px;padding:17px;min-width:0}
 h2{font-size:16px;margin:0 0 14px}label{display:block;margin:12px 0 6px;font-weight:bold}
 input,select{width:100%;padding:10px;border:1px solid #d0d5dd;border-radius:8px;font:inherit}
 button{border:0;border-radius:8px;background:#175cd3;color:white;padding:10px 13px;font:inherit;cursor:pointer}
@@ -333,10 +356,10 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 .datebox{position:relative}.datebar{display:flex;gap:8px}.datebar input{flex:1}.datebar button{white-space:nowrap}.calendar{margin-top:8px;padding:12px;border:1px solid #d0d5dd;border-radius:10px;background:#fff}.cal-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}.cal-nav{background:#f2f4f7;color:#344054;padding:7px 10px}.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;text-align:center}.cal-grid span{padding:7px 0;color:#667085;font-size:12px}.cal-day{background:#f8fafc;color:#182230;padding:9px 2px;border-radius:7px}.cal-day:hover,.cal-day.selected{background:#175cd3;color:#fff}.cal-day.today{outline:2px solid #84adff}.cal-empty{min-height:34px}
 @media(max-width:800px){.grid{grid-template-columns:1fr}.head{align-items:flex-start;gap:10px;flex-direction:column}}
 </style></head><body data-jyear="{{.JYear}}" data-jmonth="{{.JMonth}}" data-jday="{{.JDay}}"><main class="wrap">
-<div class="head"><div><h1>دستیار رابین</h1><div class="muted" style="margin-top:7px">مدیریت سفارش‌ها · ساعت تهران</div></div><span class="tag">نسخه اول · بدون اتصال به کارگزاری</span></div>
+<div class="head"><div><h1>دستیار رابین</h1><div class="muted" style="margin-top:7px">مدیریت سفارش‌ها · ساعت تهران</div></div><div class="nav"><a class="{{if not .History}}active{{end}}" href="/">سفارش‌های فعال</a><a class="{{if .History}}active{{end}}" href="/history">تاریخچه</a></div><span class="tag">نسخه اول · بدون اتصال به کارگزاری</span></div>
 <div class="note"><b>حالت آماده‌سازی:</b> این نسخه سفارش را ذخیره می‌کند و در زمان مقرر به «آماده بررسی» تغییر وضعیت می‌دهد. هیچ ورود به حساب رابین و هیچ سفارش واقعی ارسال نمی‌شود.</div>
 {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="msg">{{.Notice}}</div>{{end}}
-<div class="grid"><section class="card"><h2>تعریف سفارش</h2>
+<div class="grid{{if .History}} history{{end}}">{{if not .History}}<section class="card"><h2>تعریف سفارش</h2>
 <form method="post" action="/orders"><label>نماد</label><input name="symbol" maxlength="24" placeholder="مثلاً خودرو" required>
 <label>نوع سفارش</label><select name="side"><option value="buy">خرید</option><option value="sell">فروش</option></select>
 <label>قیمت (ریال)</label><input name="price" type="number" min="1" step="1" required>
@@ -352,15 +375,15 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 </div>
 <label>ساعت اجرا (تهران، با دقت میلی‌ثانیه)</label><input id="execute-time" name="execute_time" type="time" step="0.001" value="08:44:50.000" required>
 <button class="submit" type="submit">ذخیره سفارش</button></form>
-<div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود.</div></section>
-<section class="card"><h2>سفارش‌ها ({{len .Orders}})</h2><div class="tablewrap"><table>
-<thead><tr><th>نماد</th><th>نوع</th><th>قیمت</th><th>تعداد</th><th>زمان تهران</th><th>وضعیت</th><th></th></tr></thead><tbody>
+<div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود.</div></section>{{end}}
+<section class="card"><h2>{{if .History}}تاریخچه سفارش‌ها{{else}}سفارش‌های فعال{{end}} ({{len .Orders}})</h2><div class="tablewrap"><table>
+<thead><tr><th>نماد</th><th>نوع</th><th>قیمت</th><th>تعداد</th><th>زمان تهران</th><th>وضعیت</th>{{if not .History}}<th></th>{{end}}</tr></thead><tbody>
 {{range .Orders}}<tr><td><b>{{.Symbol}}</b></td><td>{{if eq .Side "buy"}}<span class="buy">خرید</span>{{else}}<span class="sell">فروش</span>{{end}}</td>
 <td>{{.Price}}</td><td>{{.Quantity}}</td><td>{{jalali .ExecuteAt}}</td>
 <td>{{if eq .Status "scheduled"}}<span class="status scheduled">زمان‌بندی‌شده</span>{{else if eq .Status "ready"}}<span class="status ready">آماده بررسی</span>{{else}}<span class="status cancelled">لغوشده</span>{{end}}</td>
-<td>{{if eq .Status "scheduled"}}<form method="post" action="/orders/cancel"><input type="hidden" name="id" value="{{.ID}}"><button class="cancel">لغو</button></form>{{else}}—{{end}}</td></tr>
-{{else}}<tr><td colspan="7" class="empty">هنوز سفارشی ثبت نشده است.</td></tr>{{end}}
-</tbody></table></div><div class="foot">ساعت سرور: {{.Now}} · وضعیت «آماده بررسی» به معنی ارسال به کارگزاری نیست.</div>
+{{if not $.History}}<td>{{if eq .Status "scheduled"}}<form method="post" action="/orders/cancel"><input type="hidden" name="id" value="{{.ID}}"><button class="cancel">لغو</button></form>{{else}}—{{end}}</td>{{end}}</tr>
+{{else}}<tr><td colspan="{{if .History}}6{{else}}7{{end}}" class="empty">{{if .History}}هنوز موردی در تاریخچه ثبت نشده است.{{else}}سفارش فعالی ثبت نشده است.{{end}}</td></tr>{{end}}
+</tbody></table></div><div class="foot">{{if .History}}این صفحه سفارش‌های سررسیدشده و لغوشده را نگه می‌دارد؛ هیچ سفارشی از داده‌ها حذف نشده است.{{else}}ساعت سرور: {{.Now}} · سفارش‌های سررسیدشده در صفحه تاریخچه نمایش داده می‌شوند.{{end}} وضعیت «آماده بررسی» به معنی ارسال به کارگزاری نیست.</div>
 </section></div></main>
 <script>
 (() => {
@@ -505,10 +528,17 @@ func main() {
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(data)
 	})
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+	renderOrdersPage := func(w http.ResponseWriter, r *http.Request, history bool) {
 		now := time.Now().In(tehran())
+		if err := store.markDue(now); err != nil {
+			log.Printf("mark due before page render: %v", err)
+		}
 		year, month, day := currentJalaliParts(now)
-		data := PageData{Orders: store.snapshot(), Now: formatJalaliDateTime(now), JYear: year, JMonth: month, JDay: day}
+		orders := store.activeSnapshot()
+		if history {
+			orders = store.historySnapshot()
+		}
+		data := PageData{Orders: orders, Now: formatJalaliDateTime(now), JYear: year, JMonth: month, JDay: day, History: history}
 		switch r.URL.Query().Get("notice") {
 		case "saved":
 			data.Notice = "سفارش ذخیره شد."
@@ -519,6 +549,12 @@ func main() {
 		if err := page.Execute(w, data); err != nil {
 			log.Printf("template: %v", err)
 		}
+	}
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		renderOrdersPage(w, r, false)
+	})
+	mux.HandleFunc("GET /history", func(w http.ResponseWriter, r *http.Request) {
+		renderOrdersPage(w, r, true)
 	})
 	mux.HandleFunc("POST /orders", func(w http.ResponseWriter, r *http.Request) {
 		if !sameOrigin(r) {
