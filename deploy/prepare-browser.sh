@@ -46,7 +46,7 @@ chmod 0644 "$BROWSER_DIR/browser-preflight.py"
 echo
 echo "آماده‌سازی تمام شد. هنوز هیچ ورود یا سفارشی انجام نشده است."
 echo "برای آزمایش فقط‌خواندنی، این دستور را اجرا کن:"
-echo "sudo -u rabin-assistant env PLAYWRIGHT_BROWSERS_PATH=$BROWSERS \\"
+echo "runuser -u rabin-assistant -- env PLAYWRIGHT_BROWSERS_PATH=$BROWSERS \\"
 echo "  RABIN_BROWSER_DIAG_PATH=$DATA_DIR/browser-preflight.png \\"
 echo "  $VENV/bin/python $BROWSER_DIR/browser-preflight.py"
 echo
