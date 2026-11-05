@@ -235,9 +235,9 @@ func main() {
 	if user == "" || pass == "" {
 		log.Fatal("RABIN_ADMIN_USER و RABIN_ADMIN_PASS باید تنظیم شوند")
 	}
-	addr := env("RABIN_ADDR", "127.0.0.1:8098")
-	if !strings.HasPrefix(addr, "127.0.0.1:") && !strings.HasPrefix(addr, "[::1]:") {
-		log.Fatal("برای امنیت، سرویس فقط باید روی localhost اجرا شود")
+	addr := env("RABIN_ADDR", "0.0.0.0:8098")
+	if strings.TrimSpace(addr) == "" {
+		log.Fatal("RABIN_ADDR خالی است")
 	}
 	dataDir := env("RABIN_DATA_DIR", "./data")
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
