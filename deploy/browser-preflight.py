@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Read-only Rabin login UI probe.
+"""Read-only Rabin login UI inspection.
 
-Opens the public trading page, then opens the login UI only.
-It never types credentials, submits a login form, or places an order.
+Opens the public page and login panel, then reports field metadata only.
+It never types credentials, submits login, or places an order.
 """
 import json
 import os
@@ -43,31 +43,78 @@ def collect_page(page):
           disabled: !!el.disabled
         };
       });
-      const forms = [...document.forms].filter(visible).map(form => ({
-        method: (form.method || 'get').toUpperCase(),
-        action: form.action || '',
-        fields: [...form.querySelectorAll('input,textarea,select')].filter(visible)
-          .map(el => ({
-            tag: el.tagName.toLowerCase(),
-            type: el.getAttribute('type') || '',
-            name: el.getAttribute('name') || '',
-            id: el.id || '',
-            placeholder: el.getAttribute('placeholder') || '',
-            ariaLabel: el.getAttribute('aria-label') || ''
-          }))
-      }));
-      const dialogs = [...document.querySelectorAll(
-        '[role="dialog"],dialog,[aria-modal="true"]'
-      )].filter(visible).map(el => (el.innerText || '').trim().slice(0, 1200));
       return {
         title: document.title,
         url: location.href,
         readyState: document.readyState,
         bodyText: (document.body?.innerText || '').slice(0, 3600),
-        controls,
-        forms,
-        dialogs
+        controls
       };
+    }""")
+
+def inspect_login_fields(page):
+    return page.evaluate("""() => {
+      const visible = (el) => {
+        const r = el.getBoundingClientRect();
+        const s = getComputedStyle(el);
+        return r.width > 0 && r.height > 0 &&
+          s.visibility !== 'hidden' && s.display !== 'none';
+      };
+      const user = [...document.querySelectorAll('input')].find(el =>
+        visible(el) && el.name === 'userName'
+      );
+      const pass = [...document.querySelectorAll('input')].find(el =>
+        visible(el) && el.name === 'password'
+      );
+      const fields = [user, pass].filter(Boolean).map(el => ({
+        tag: el.tagName.toLowerCase(),
+        type: el.type || '',
+        name: el.name || '',
+        id: el.id || '',
+        placeholder: el.placeholder || '',
+        autocomplete: el.autocomplete || '',
+        inputMode: el.inputMode || '',
+        maxLength: el.maxLength,
+        required: !!el.required,
+        disabled: !!el.disabled
+      }));
+      const form = (pass && pass.closest('form')) || (user && user.closest('form'));
+      const formInfo = form ? {
+        method: (form.method || 'get').toUpperCase(),
+        action: form.action || '',
+        id: form.id || '',
+        className: String(form.className || ''),
+        fields: [...form.querySelectorAll('input,textarea,select')].map(el => ({
+          tag: el.tagName.toLowerCase(),
+          type: el.getAttribute('type') || '',
+          name: el.getAttribute('name') || '',
+          id: el.id || '',
+          autocomplete: el.getAttribute('autocomplete') || '',
+          required: el.hasAttribute('required')
+        })),
+        buttons: [...form.querySelectorAll('button,input[type="submit"],input[type="button"]')]
+          .filter(visible).map(el => ({
+            tag: el.tagName.toLowerCase(),
+            type: el.getAttribute('type') || '',
+            text: (el.innerText || el.value || '').trim().slice(0, 100),
+            className: String(el.className || '')
+          }))
+      } : null;
+      const captcha = [...document.querySelectorAll(
+        '[class*="captcha" i],[id*="captcha" i],iframe[src*="captcha" i],img[alt*="captcha" i],canvas'
+      )].filter(visible).slice(0, 20).map(el => ({
+        tag: el.tagName.toLowerCase(),
+        id: el.id || '',
+        className: String(el.className || ''),
+        alt: el.getAttribute('alt') || '',
+        text: (el.innerText || '').trim().slice(0, 120)
+      }));
+      const securityText = (document.body?.innerText || '')
+        .split('\\n')
+        .map(x => x.trim())
+        .filter(x => x && /کلید امن|صفحه کلید مجازی|رمز عبور|نام کاربری|کد ملی|captcha|کپچا/i.test(x))
+        .slice(0, 30);
+      return {fields, form: formInfo, captchaHints: captcha, securityText};
     }""")
 
 def main():
@@ -81,7 +128,7 @@ def main():
         "ok": False,
         "target": TARGET,
         "stage": "starting",
-        "note": "Read-only login UI probe: opens login UI only; no credentials typed, no login submitted, no order placed.",
+        "note": "Read-only inspection. No credentials typed, no login submitted, and no order placed.",
     }
     with sync_playwright() as p:
         browser = None
@@ -97,9 +144,6 @@ def main():
             page.wait_for_timeout(7000)
             initial = collect_page(page)
 
-            # Find the visible login button by its rendered text. The site's
-            # layout can place this button outside the viewport in headless mode,
-            # so scroll it into view and dispatch a normal DOM click.
             click_info = page.evaluate("""() => {
               const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
               const candidates = [...document.querySelectorAll('button,[role="button"]')];
@@ -107,27 +151,27 @@ def main():
                 norm(x.innerText) === 'ورود به حساب کاربری'
               ) || candidates.find(x => norm(x.innerText) === 'ورود');
               if (!el) return {found: false};
-              const before = (() => {
-                const r = el.getBoundingClientRect();
-                return {x: r.x, y: r.y, width: r.width, height: r.height};
-              })();
               el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
               el.click();
-              return {found: true, text: norm(el.innerText), rectBefore: before};
+              return {found: true, text: norm(el.innerText)};
             }""")
             if click_info.get("found"):
                 page.wait_for_timeout(3500)
 
             login_ui = collect_page(page)
+            login_details = inspect_login_fields(page)
             result.update({
                 "ok": True,
-                "stage": "login_ui_inspected" if click_info.get("found") else "login_button_not_found",
+                "stage": "login_form_inspected" if login_details.get("fields") else (
+                    "login_button_clicked_fields_not_found" if click_info.get("found")
+                    else "login_button_not_found"
+                ),
                 "http_status": response.status if response else None,
                 "initial_page": initial,
                 "login_click": click_info,
                 "login_page": login_ui,
+                "login_details": login_details,
             })
-
             try:
                 SCREENSHOT.parent.mkdir(parents=True, exist_ok=True)
                 page.screenshot(path=str(SCREENSHOT), full_page=True)
@@ -139,10 +183,7 @@ def main():
             context.close()
             return 0
         except Exception as exc:
-            result.update({
-                "stage": "navigation_or_browser_error",
-                "error": str(exc),
-            })
+            result.update({"stage": "navigation_or_browser_error", "error": str(exc)})
             emit(result)
             return 1
         finally:
