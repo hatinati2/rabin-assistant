@@ -43,3 +43,28 @@ func TestParseRejectsInvalidJalaliDate(t *testing.T) {
 		t.Fatal("expected invalid Esfand 30 in non-leap year 1405 to be rejected")
 	}
 }
+
+func TestBuildJalaliCalendarAban1405(t *testing.T) {
+	cal, err := buildCalendar(1405, 8)
+	if err != nil {
+		t.Fatalf("buildCalendar: %v", err)
+	}
+	if cal.MonthName != "آبان" {
+		t.Fatalf("month name = %q, want آبان", cal.MonthName)
+	}
+	if cal.Days != 30 {
+		t.Fatalf("days = %d, want 30", cal.Days)
+	}
+	// 1 Aban 1405 was Friday; Saturday-based index is 6.
+	if cal.FirstWeekday != 6 {
+		t.Fatalf("first weekday = %d, want 6 (Friday)", cal.FirstWeekday)
+	}
+}
+
+func TestCurrentJalaliParts(t *testing.T) {
+	input := time.Date(2026, time.November, 5, 8, 44, 50, 0, tehran())
+	y, m, d := currentJalaliParts(input)
+	if y != 1405 || m != 8 || d != 14 {
+		t.Fatalf("got %04d/%02d/%02d, want 1405/08/14", y, m, d)
+	}
+}
