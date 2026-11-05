@@ -435,7 +435,7 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="msg">{{.Notice}}</div>{{end}}
 <div class="grid{{if .History}} history{{end}}">{{if not .History}}<section class="card"><h2>تعریف سفارش</h2>
 <form id="order-form" method="post" action="/orders"><label>مسیر ثبت سفارش</label><select id="execution-mode" name="execution_mode"><option value="manual" selected>بدون API — ثبت دستی در رابین</option><option value="api" {{if not .APIAvailable}}disabled{{end}}>با API — ارسال عادی به رابین</option></select>
-<label>نماد نمایشی</label><input name="symbol" maxlength="24" placeholder="مثلاً خودرو" required>
+<label>انتخاب نماد از فهرست</label><select id="symbol-preset"><option value="">انتخاب نماد (اختیاری)</option><option value="خودرو" data-isin="IRO1IKCO0001">خودرو — ایران‌خودرو</option></select><label>نماد نمایشی</label><input id="order-symbol" name="symbol" maxlength="24" placeholder="مثلاً خودرو" required>
 <label>شناسه ISIN (فقط برای مسیر API)</label><input id="order-isin" name="isin" maxlength="12" minlength="12" pattern="[A-Za-z]{2}[A-Za-z0-9]{9}[0-9]" placeholder="مثلاً IR..." autocomplete="off">
 <label>نوع سفارش</label><select name="side"><option value="buy">خرید</option><option value="sell">فروش</option></select>
 <label>قیمت (ریال)</label><input name="price" type="number" min="1" step="1" required>
@@ -481,6 +481,16 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
   const calendar = $("jalali-calendar");
   const executionMode = $("execution-mode");
   const isinInput = $("order-isin");
+  const symbolPreset = $("symbol-preset");
+  const symbolInput = $("order-symbol");
+  if (symbolPreset) {
+    symbolPreset.addEventListener("change", () => {
+      const option = symbolPreset.selectedOptions[0];
+      if (!option || !option.value) return;
+      symbolInput.value = option.value;
+      if (isinInput) isinInput.value = option.dataset.isin || "";
+    });
+  }
   function syncExecutionMode() {
     const apiMode = executionMode && executionMode.value === "api";
     if (isinInput) {
