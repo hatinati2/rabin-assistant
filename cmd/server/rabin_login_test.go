@@ -18,10 +18,12 @@ func TestRabinLoginClientSuccess(t *testing.T) {
 		}
 		var body map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatal(err)
+			t.Errorf("decode request body: %v", err)
+			return
 		}
 		if body["userName"] != "unit-user" || body["password"] != "unit-pass" {
-			t.Fatal("unexpected login payload")
+			t.Errorf("unexpected login payload")
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"success":true,"data":{"accessToken":"unit-token"}}`))
