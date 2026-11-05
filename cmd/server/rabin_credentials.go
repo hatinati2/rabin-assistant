@@ -269,7 +269,7 @@ func (s *RabinCredentialStore) Load() (string, string, error) {
 func (s *RabinCredentialStore) SaveAccessToken(token string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if token == "" || len(token) > 64<<10 || strings.ContainsRune(token, '\\x00') {
+	if token == "" || len(token) > 64<<10 || strings.ContainsRune(token, '\x00') {
 		return errors.New("توکن دریافتی رابین معتبر نیست")
 	}
 	key, err := s.readKey()
@@ -404,9 +404,19 @@ func (s *RabinCredentialStore) Render(w http.ResponseWriter, errorMessage, notic
 	if err != nil && errorMessage == "" {
 		errorMessage = "خواندن اطلاعات ذخیره‌شده ممکن نشد: " + err.Error()
 	}
+	loginAt, hasSession, sessionErr := s.SessionStatus()
+	if sessionErr != nil && errorMessage == "" {
+		errorMessage = "خواندن نشست ذخیره‌شده رابین ممکن نشد."
+	}
+	loginAtText := ""
+	if hasSession {
+		loginAtText = formatJalaliDateTime(loginAt.In(tehran()))
+	}
 	data := RabinSettingsPageData{
 		Username: username,
 		Saved: saved,
+		HasSession: hasSession,
+		LoginAt: loginAtText,
 		Error: errorMessage,
 		Notice: notice,
 	}
