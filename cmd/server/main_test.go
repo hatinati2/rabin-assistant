@@ -117,6 +117,63 @@ func TestValidateOrderAcceptsManualJalaliDateAndTimeFields(t *testing.T) {
 	if !order.ExecuteAt.Equal(want) {
 		t.Fatalf("execute time = %s, want %s", order.ExecuteAt, want)
 	}
+	if order.ExecutionMode != executionModeManual {
+		t.Fatalf("execution mode = %q, want %q", order.ExecutionMode, executionModeManual)
+	}
+}
+
+func TestValidateOrderRejectsAPIUntilIntegrationExists(t *testing.T) {
+	now := time.Date(2026, time.November, 5, 8, 40, 0, 0, tehran())
+	form := url.Values{
+		"symbol":          {"TEST"},
+		"side":            {"buy"},
+		"price":           {"1000"},
+		"quantity":        {"10"},
+		"execute_at_date": {"۱۴۰۵/۰۸/۱۴"},
+		"execute_time":    {"08:44:50"},
+		"execution_mode":  {"api"},
+	}
+	req := httptest.NewRequest("POST", "/orders", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if _, err := validateOrder(req, now); err == nil || !strings.Contains(err.Error(), "هنوز فعال نشده") {
+		t.Fatalf("API mode error = %v, want explicit not-enabled error", err)
+	}
+}
+
+func TestConfirmManualOrder(t *testing.T) {
+	path := t.TempDir() + "/orders.json"
+	store, err := newStore(path)
+	if err != nil {
+		t.Fatalf("newStore: %v", err)
+	}
+	store.orders = []Order{{
+		ID: "manual-1", ExecutionMode: executionModeManual,
+		Status: statusReady, ExecuteAt: time.Now().Add(-time.Minute),
+	}}
+	if err := store.confirmManual("manual-1"); err != nil {
+		t.Fatalf("confirmManual: %v", err)
+	}
+	orders := store.snapshot()
+	if len(orders) != 1 || orders[0].Status != statusManualDone {
+		t.Fatalf("confirmed order = %#v, want status %q", orders, statusManualDone)
+	}
+
+	if err := store.confirmManual("manual-1"); err == nil {
+		t.Fatal("expected a second confirmation to be rejected")
+	}
+}
+
+func TestConfirmManualRejectsNonManualAndNotReadyOrders(t *testing.T) {
+	store := &Store{orders: []Order{
+		{ID: "scheduled", ExecutionMode: executionModeManual, Status: statusScheduled},
+		{ID: "api", ExecutionMode: executionModeAPI, Status: statusReady},
+	}}
+	if err := store.confirmManual("scheduled"); err == nil {
+		t.Fatal("expected scheduled order to be rejected")
+	}
+	if err := store.confirmManual("api"); err == nil {
+		t.Fatal("expected API order to be rejected by manual confirmation")
+	}
 }
 
 func TestSameOriginAcceptsSameHostFormRequests(t *testing.T) {
