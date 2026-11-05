@@ -136,7 +136,7 @@ func TestValidateOrderRejectsAPIUntilIntegrationExists(t *testing.T) {
 	}
 	req := httptest.NewRequest("POST", "/orders", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if _, err := validateOrder(req, now); err == nil || !strings.Contains(err.Error(), "هنوز فعال نشده") {
+	if _, err := validateOrder(req, now); err == nil || !strings.Contains(err.Error(), "فعال و پیکربندی نشده") {
 		t.Fatalf("API mode error = %v, want explicit not-enabled error", err)
 	}
 }
