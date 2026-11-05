@@ -1,0 +1,362 @@
+package main
+
+import (
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"html/template"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+const (
+	statusScheduled = "scheduled"
+	statusReady     = "ready"
+	statusCancelled = "cancelled"
+)
+
+type Order struct {
+	ID        string    `json:"id"`
+	Symbol    string    `json:"symbol"`
+	Side      string    `json:"side"`
+	Price     int64     `json:"price"`
+	Quantity  int64     `json:"quantity"`
+	ExecuteAt time.Time `json:"execute_at"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type Store struct {
+	mu     sync.Mutex
+	path   string
+	orders []Order
+}
+
+func newStore(path string) (*Store, error) {
+	s := &Store{path: path, orders: []Order{}}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return s, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &s.orders); err != nil {
+			return nil, fmt.Errorf("خواندن داده سفارش‌ها: %w", err)
+		}
+	}
+	return s, nil
+}
+
+func (s *Store) snapshot() []Order {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := append([]Order(nil), s.orders...)
+	sort.Slice(out, func(i, j int) bool { return out[i].ExecuteAt.Before(out[j].ExecuteAt) })
+	return out
+}
+
+func (s *Store) add(order Order) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.orders = append(s.orders, order)
+	if err := s.saveLocked(); err != nil {
+		s.orders = s.orders[:len(s.orders)-1]
+		return err
+	}
+	return nil
+}
+
+func (s *Store) cancel(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.orders {
+		if s.orders[i].ID != id {
+			continue
+		}
+		if s.orders[i].Status != statusScheduled {
+			return errors.New("فقط سفارش زمان‌بندی‌شده قابل لغو است")
+		}
+		old := s.orders[i]
+		s.orders[i].Status = statusCancelled
+		s.orders[i].UpdatedAt = time.Now().In(tehran())
+		if err := s.saveLocked(); err != nil {
+			s.orders[i] = old
+			return err
+		}
+		return nil
+	}
+	return errors.New("سفارش پیدا نشد")
+}
+
+func (s *Store) markDue(now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := false
+	for i := range s.orders {
+		if s.orders[i].Status == statusScheduled && !s.orders[i].ExecuteAt.After(now) {
+			s.orders[i].Status = statusReady
+			s.orders[i].UpdatedAt = now
+			changed = true
+		}
+	}
+	if changed {
+		return s.saveLocked()
+	}
+	return nil
+}
+
+func (s *Store) saveLocked() error {
+	data, err := json.MarshalIndent(s.orders, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
+		return err
+	}
+	tmp := s.path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.path)
+}
+
+var tehranLocation = func() *time.Location {
+	loc, err := time.LoadLocation("Asia/Tehran")
+	if err != nil {
+		return time.FixedZone("IRST", 3*3600+30*60)
+	}
+	return loc
+}()
+
+func tehran() *time.Location { return tehranLocation }
+
+var symbolPattern = regexp.MustCompile(`^[\p{L}\p{N}._-]{1,24}$`)
+
+func validateOrder(r *http.Request, now time.Time) (Order, error) {
+	if err := r.ParseForm(); err != nil {
+		return Order{}, errors.New("فرم معتبر نیست")
+	}
+	symbol := strings.TrimSpace(r.FormValue("symbol"))
+	side := r.FormValue("side")
+	price, priceErr := strconv.ParseInt(r.FormValue("price"), 10, 64)
+	quantity, quantityErr := strconv.ParseInt(r.FormValue("quantity"), 10, 64)
+	if !symbolPattern.MatchString(symbol) {
+		return Order{}, errors.New("نماد نامعتبر است")
+	}
+	if side != "buy" && side != "sell" {
+		return Order{}, errors.New("نوع سفارش نامعتبر است")
+	}
+	if priceErr != nil || price <= 0 {
+		return Order{}, errors.New("قیمت باید عدد صحیح مثبت و به ریال باشد")
+	}
+	if quantityErr != nil || quantity <= 0 {
+		return Order{}, errors.New("تعداد باید عدد صحیح مثبت باشد")
+	}
+	executeAt, err := time.ParseInLocation("2006-01-02T15:04", r.FormValue("execute_at"), tehran())
+	if err != nil || !executeAt.After(now) {
+		return Order{}, errors.New("تاریخ و ساعت باید معتبر و در آینده باشند")
+	}
+	return Order{
+		ID:        fmt.Sprintf("%d", now.UnixNano()),
+		Symbol:    symbol,
+		Side:      side,
+		Price:     price,
+		Quantity:  quantity,
+		ExecuteAt: executeAt,
+		Status:    statusScheduled,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}, nil
+}
+
+type PageData struct {
+	Orders       []Order
+	Error, Notice string
+	Now          string
+}
+
+var page = template.Must(template.New("page").Parse(`<!doctype html>
+<html lang="fa" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>دستیار رابین</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f6fa;color:#182230;font:14px Tahoma,Arial}
+.wrap{max-width:1100px;margin:30px auto;padding:0 16px}.head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
+h1{font-size:22px;margin:0}.muted,.foot{color:#667085}.tag{background:#eef4ff;color:#1849a9;border-radius:18px;padding:7px 10px;font-size:12px}
+.note,.msg{padding:12px;border-radius:9px;margin:12px 0;line-height:1.8}.note{background:#fffaeb;border:1px solid #fedf89;color:#93370d}
+.msg{background:#ecfdf3;color:#05603a}.err{background:#fef3f2;color:#b42318}
+.grid{display:grid;grid-template-columns:320px 1fr;gap:16px}.card{background:white;border:1px solid #e4e7ec;border-radius:13px;padding:17px;min-width:0}
+h2{font-size:16px;margin:0 0 14px}label{display:block;margin:12px 0 6px;font-weight:bold}
+input,select{width:100%;padding:10px;border:1px solid #d0d5dd;border-radius:8px;font:inherit}
+button{border:0;border-radius:8px;background:#175cd3;color:white;padding:10px 13px;font:inherit;cursor:pointer}
+.submit{width:100%;margin-top:15px}.cancel{background:white;color:#b42318;border:1px solid #fecdca;padding:6px 9px}
+table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{text-align:right;padding:10px 7px;border-bottom:1px solid #eaecf0}
+th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-block;border-radius:16px;padding:5px 8px;font-size:11px}
+.scheduled{background:#eff8ff;color:#175cd3}.ready{background:#fffaeb;color:#b54708}.cancelled{background:#f2f4f7;color:#475467}
+.buy{color:#067647;font-weight:bold}.sell{color:#b42318;font-weight:bold}.empty{text-align:center;color:#667085;padding:28px}
+.foot{font-size:12px;line-height:1.8;margin-top:12px}
+@media(max-width:800px){.grid{grid-template-columns:1fr}.head{align-items:flex-start;gap:10px;flex-direction:column}}
+</style></head><body><main class="wrap">
+<div class="head"><div><h1>دستیار رابین</h1><div class="muted" style="margin-top:7px">مدیریت سفارش‌ها · ساعت تهران</div></div><span class="tag">نسخه اول · بدون اتصال به کارگزاری</span></div>
+<div class="note"><b>حالت آماده‌سازی:</b> این نسخه سفارش را ذخیره می‌کند و در زمان مقرر به «آماده بررسی» تغییر وضعیت می‌دهد. هیچ ورود به حساب رابین و هیچ سفارش واقعی ارسال نمی‌شود.</div>
+{{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="msg">{{.Notice}}</div>{{end}}
+<div class="grid"><section class="card"><h2>تعریف سفارش</h2>
+<form method="post" action="/orders"><label>نماد</label><input name="symbol" maxlength="24" placeholder="مثلاً خودرو" required>
+<label>نوع سفارش</label><select name="side"><option value="buy">خرید</option><option value="sell">فروش</option></select>
+<label>قیمت (ریال)</label><input name="price" type="number" min="1" step="1" required>
+<label>تعداد</label><input name="quantity" type="number" min="1" step="1" required>
+<label>تاریخ و ساعت اجرا (تهران)</label><input name="execute_at" type="datetime-local" required>
+<button class="submit" type="submit">ذخیره سفارش</button></form>
+<div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود.</div></section>
+<section class="card"><h2>سفارش‌ها ({{len .Orders}})</h2><div class="tablewrap"><table>
+<thead><tr><th>نماد</th><th>نوع</th><th>قیمت</th><th>تعداد</th><th>زمان تهران</th><th>وضعیت</th><th></th></tr></thead><tbody>
+{{range .Orders}}<tr><td><b>{{.Symbol}}</b></td><td>{{if eq .Side "buy"}}<span class="buy">خرید</span>{{else}}<span class="sell">فروش</span>{{end}}</td>
+<td>{{.Price}}</td><td>{{.Quantity}}</td><td>{{.ExecuteAt.Format "2006-01-02 15:04"}}</td>
+<td>{{if eq .Status "scheduled"}}<span class="status scheduled">زمان‌بندی‌شده</span>{{else if eq .Status "ready"}}<span class="status ready">آماده بررسی</span>{{else}}<span class="status cancelled">لغوشده</span>{{end}}</td>
+<td>{{if eq .Status "scheduled"}}<form method="post" action="/orders/cancel"><input type="hidden" name="id" value="{{.ID}}"><button class="cancel">لغو</button></form>{{else}}—{{end}}</td></tr>
+{{else}}<tr><td colspan="7" class="empty">هنوز سفارشی ثبت نشده است.</td></tr>{{end}}
+</tbody></table></div><div class="foot">ساعت سرور: {{.Now}} · وضعیت «آماده بررسی» به معنی ارسال به کارگزاری نیست.</div>
+</section></div></main></body></html>`))
+
+func main() {
+	user, pass := os.Getenv("RABIN_ADMIN_USER"), os.Getenv("RABIN_ADMIN_PASS")
+	if user == "" || pass == "" {
+		log.Fatal("RABIN_ADMIN_USER و RABIN_ADMIN_PASS باید تنظیم شوند")
+	}
+	addr := env("RABIN_ADDR", "127.0.0.1:8098")
+	if !strings.HasPrefix(addr, "127.0.0.1:") && !strings.HasPrefix(addr, "[::1]:") {
+		log.Fatal("برای امنیت، سرویس فقط باید روی localhost اجرا شود")
+	}
+	dataDir := env("RABIN_DATA_DIR", "./data")
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		log.Fatal(err)
+	}
+	store, err := newStore(filepath.Join(dataDir, "orders.json"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for now := range ticker.C {
+			if err := store.markDue(now.In(tehran())); err != nil {
+				log.Printf("scheduler: %v", err)
+			}
+		}
+	}()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		data := PageData{Orders: store.snapshot(), Now: time.Now().In(tehran()).Format("2006-01-02 15:04:05")}
+		switch r.URL.Query().Get("notice") {
+		case "saved":
+			data.Notice = "سفارش ذخیره شد."
+		case "cancelled":
+			data.Notice = "سفارش لغو شد."
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := page.Execute(w, data); err != nil {
+			log.Printf("template: %v", err)
+		}
+	})
+	mux.HandleFunc("POST /orders", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "درخواست نامعتبر", http.StatusForbidden)
+			return
+		}
+		now := time.Now().In(tehran())
+		order, err := validateOrder(r, now)
+		if err == nil {
+			err = store.add(order)
+		}
+		if err != nil {
+			renderError(w, store, err.Error())
+			return
+		}
+		http.Redirect(w, r, "/?notice=saved", http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /orders/cancel", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "درخواست نامعتبر", http.StatusForbidden)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			renderError(w, store, "فرم نامعتبر است")
+			return
+		}
+		if err := store.cancel(r.FormValue("id")); err != nil {
+			renderError(w, store, err.Error())
+			return
+		}
+		http.Redirect(w, r, "/?notice=cancelled", http.StatusSeeOther)
+	})
+
+	handler := securityHeaders(basicAuth(user, pass, mux))
+	server := &http.Server{
+		Addr: addr, Handler: handler,
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
+		WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second,
+	}
+	log.Printf("Rabin Assistant listening on %s", addr)
+	log.Fatal(server.ListenAndServe())
+}
+
+func renderError(w http.ResponseWriter, store *Store, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = page.Execute(w, PageData{
+		Orders: store.snapshot(), Error: message,
+		Now: time.Now().In(tehran()).Format("2006-01-02 15:04:05"),
+	})
+}
+
+func sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	return strings.EqualFold(origin, "http://"+r.Host) || strings.EqualFold(origin, "https://"+r.Host)
+}
+
+func basicAuth(user, pass string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUser, gotPass, ok := r.BasicAuth()
+		userOK := subtle.ConstantTimeCompare([]byte(gotUser), []byte(user)) == 1
+		passOK := subtle.ConstantTimeCompare([]byte(gotPass), []byte(pass)) == 1
+		if !ok || !userOK || !passOK {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Rabin Assistant", charset="UTF-8"`)
+			http.Error(w, "احراز هویت لازم است", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func env(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
+}
