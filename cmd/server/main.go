@@ -437,7 +437,9 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="msg">{{.Notice}}</div>{{end}}
 <div class="grid{{if .History}} history{{end}}">{{if not .History}}<section class="card"><h2>تعریف سفارش</h2>
 <form id="order-form" method="post" action="/orders"><label>مسیر ثبت سفارش</label><select id="execution-mode" name="execution_mode"><option value="manual" selected>بدون API — ثبت دستی در رابین</option><option value="api" {{if not .APIAvailable}}disabled{{end}}>با API — ارسال عادی به رابین</option></select>
-<label>انتخاب نماد از فهرست</label><select id="symbol-preset"><option value="">انتخاب نماد (اختیاری)</option>{{range .Symbols}}<option value="{{.Symbol}}" data-isin="{{.ISIN}}">{{.Symbol}}{{if .CompanyName}} — {{.CompanyName}}{{end}}{{if .MarketType}} ({{.MarketType}}){{end}}</option>{{end}}</select><div class="foot">{{.SymbolCatalogStatus}}</div><label>نماد نمایشی</label><input id="order-symbol" name="symbol" maxlength="24" placeholder="مثلاً خودرو" required>
+<label>انتخاب نماد از فهرست</label><select id="symbol-preset"><option value="">انتخاب نماد (اختیاری)</option>{{range .Symbols}}<option value="{{.Symbol}}" data-isin="{{.ISIN}}">{{.Symbol}}{{if .CompanyName}} — {{.CompanyName}}{{end}}{{if .MarketType}} ({{.MarketType}}){{end}}</option>{{end}}</select><div class="foot">{{.SymbolCatalogStatus}}</div><label>نماد نمایشی</label><input id="order-symbol" name="symbol" maxlength="24" list="market-symbol-options" placeholder="مثلاً خودرو" required>
+<datalist id="market-symbol-options">{{range .Symbols}}<option value="{{.Symbol}}"></option>{{end}}</datalist>
+<div id="symbol-lookup-status" class="foot" aria-live="polite">می‌توانی نماد را تایپ کنی؛ ISIN به‌صورت خودکار پیدا می‌شود.</div>
 <label>شناسه ISIN (فقط برای مسیر API)</label><input id="order-isin" name="isin" maxlength="12" minlength="12" pattern="[A-Za-z]{2}[A-Za-z0-9]{9}[0-9]" placeholder="مثلاً IR..." autocomplete="off">
 <label>نوع سفارش</label><select name="side"><option value="buy">خرید</option><option value="sell">فروش</option></select>
 <label>قیمت (ریال)</label><input name="price" type="number" min="1" step="1" required>
@@ -485,12 +487,72 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
   const isinInput = $("order-isin");
   const symbolPreset = $("symbol-preset");
   const symbolInput = $("order-symbol");
+  const symbolLookupStatus = $("symbol-lookup-status");
+  let symbolLookupTimer = null;
+  let symbolLookupGeneration = 0;
+
+  function showSymbolLookupStatus(message) {
+    if (symbolLookupStatus) symbolLookupStatus.textContent = message;
+  }
+
+  async function lookupTypedSymbol(query, generation) {
+    try {
+      const response = await fetch("/api/symbols/lookup?symbol=" + encodeURIComponent(query), {
+        headers: {"Accept": "application/json"}
+      });
+      if (generation !== symbolLookupGeneration || symbolInput.value.trim() !== query) return;
+
+      if (response.ok) {
+        const item = await response.json();
+        if (generation !== symbolLookupGeneration || symbolInput.value.trim() !== query) return;
+        if (isinInput) isinInput.value = item.isin || "";
+        showSymbolLookupStatus(item.isin ? "ISIN پیدا شد: " + item.isin : "برای این نماد ISIN پیدا نشد.");
+        return;
+      }
+
+      if (isinInput) isinInput.value = "";
+      if (response.status === 409) {
+        showSymbolLookupStatus("این نماد چند ISIN دارد؛ لطفاً آن را از فهرست بالا انتخاب کن.");
+      } else {
+        showSymbolLookupStatus("نماد دقیق پیدا نشد؛ املای نماد را بررسی کن یا از فهرست بالا انتخاب کن.");
+      }
+    } catch (_) {
+      if (generation !== symbolLookupGeneration || symbolInput.value.trim() !== query) return;
+      if (isinInput) isinInput.value = "";
+      showSymbolLookupStatus("دریافت ISIN انجام نشد؛ اتصال پنل را بررسی کن.");
+    }
+  }
+
+  function scheduleSymbolLookup() {
+    if (symbolLookupTimer !== null) window.clearTimeout(symbolLookupTimer);
+    symbolLookupGeneration++;
+    const generation = symbolLookupGeneration;
+    const query = symbolInput ? symbolInput.value.trim() : "";
+    if (isinInput) isinInput.value = "";
+    if (!query) {
+      showSymbolLookupStatus("می‌توانی نماد را تایپ کنی؛ ISIN به‌صورت خودکار پیدا می‌شود.");
+      return;
+    }
+    showSymbolLookupStatus("در حال پیدا کردن ISIN نماد...");
+    symbolLookupTimer = window.setTimeout(() => {
+      lookupTypedSymbol(query, generation);
+    }, 300);
+  }
+
+  if (symbolInput) {
+    symbolInput.addEventListener("input", scheduleSymbolLookup);
+    symbolInput.addEventListener("change", scheduleSymbolLookup);
+    symbolInput.addEventListener("blur", scheduleSymbolLookup);
+  }
   if (symbolPreset) {
     symbolPreset.addEventListener("change", () => {
       const option = symbolPreset.selectedOptions[0];
       if (!option || !option.value) return;
+      if (symbolLookupTimer !== null) window.clearTimeout(symbolLookupTimer);
+      symbolLookupGeneration++;
       symbolInput.value = option.value;
       if (isinInput) isinInput.value = option.dataset.isin || "";
+      showSymbolLookupStatus(isinInput && isinInput.value ? "ISIN پیدا شد: " + isinInput.value : "");
     });
   }
   function syncExecutionMode() {
@@ -651,6 +713,7 @@ func main() {
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(data)
 	})
+	mux.HandleFunc("GET /api/symbols/lookup", marketSymbolLookupHandler(symbolCatalog))
 	renderOrdersPage := func(w http.ResponseWriter, r *http.Request, history bool) {
 		now := time.Now().In(tehran())
 		if err := store.markDue(now); err != nil {
