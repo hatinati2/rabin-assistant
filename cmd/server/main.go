@@ -801,7 +801,7 @@ func main() {
 		_ = json.NewEncoder(w).Encode(data)
 	})
 	mux.HandleFunc("GET /api/symbols/lookup", marketSymbolLookupHandler(symbolCatalog))
-	mux.HandleFunc("GET /api/symbols/suggest", marketSymbolSuggestHandler(symbolCatalog))
+	mux.HandleFunc("GET /api/symbols/suggest", marketSymbolSuggestHandler(symbolCatalog, TSESymbolClient{}))
 	renderOrdersPage := func(w http.ResponseWriter, r *http.Request, history bool) {
 		now := time.Now().In(tehran())
 		if err := store.markDue(now); err != nil {
