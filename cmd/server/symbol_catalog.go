@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,6 +22,7 @@ const (
 	tseGatewayBaseURL       = "https://webgw.tse.ir"
 	tseMarketWatchCashPath  = "/InstrumentProvider/api/v1/MarketWatch/MarketWatchCash/fa"
 	tseMarketWatchETFPath   = "/InstrumentProvider/api/v1/MarketWatch/MarketWatchEtf/fa"
+	tseInstrumentShortcutPath = "/InstrumentProvider/api/v1/Instrument/InstrumentShortcut/fa"
 	tseMaxResponseBytes     = 16 << 20
 )
 
@@ -45,6 +47,121 @@ type TSESymbolClient struct {
 	BaseURL string
 	HTTP    *http.Client
 }
+
+type tseInstrumentShortcutResponse struct {
+	Items []struct {
+		InstrumentIDLower  string `json:"instrumentid"`
+		InstrumentIDCamel  string `json:"instrumentId"`
+		InstrumentNameKey  string `json:"instrument_Name"`
+		InstrumentNameCamel string `json:"instrumentName"`
+		CompanyNameKey     string `json:"company_Name_Persian"`
+		CompanyNameCamel   string `json:"companyNamePersian"`
+		MarketCategoryName string `json:"marketcategoryname"`
+		MarketTypeName     string `json:"markettypename"`
+		MarketName         string `json:"marketname"`
+	} `json:"items"`
+}
+
+// SearchSymbols uses TSE's paginated instrument directory, which can return
+// symbols outside the live cash/ETF market-watch lists (for example suspended
+// or currently inactive symbols). It is a read-only GET request.
+func (c TSESymbolClient) SearchSymbols(ctx context.Context, query string, pageSize int) ([]MarketSymbol, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, errors.New("عبارت جست‌وجوی نماد خالی است")
+	}
+	if pageSize < 1 || pageSize > 20 {
+		pageSize = marketSymbolSuggestionLimit
+	}
+
+	baseURL := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+	if baseURL == "" {
+		baseURL = tseGatewayBaseURL
+	}
+	client := c.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: 4 * time.Second}
+	}
+
+	values := url.Values{}
+	values.Set("SimpleSearchText", query)
+	values.Set("PageNumber", "1")
+	values.Set("PageSize", strconv.Itoa(pageSize))
+	endpoint := baseURL + tseInstrumentShortcutPath + "?" + values.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126 Safari/537.36")
+	req.Header.Set("Accept", "application/json,text/plain,*/*")
+	req.Header.Set("Referer", "https://www.tse.ir/")
+	req.Header.Set("Origin", "https://www.tse.ir")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("جست‌وجوی TSE با HTTP %d پاسخ داد", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > 2<<20 {
+		return nil, errors.New("پاسخ جست‌وجوی TSE بیش از حد بزرگ است")
+	}
+
+	var payload tseInstrumentShortcutResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("ساختار پاسخ جست‌وجوی TSE نامعتبر است: %w", err)
+	}
+
+	byISIN := make(map[string]MarketSymbol)
+	for _, item := range payload.Items {
+		isin := strings.ToUpper(strings.TrimSpace(item.InstrumentIDLower))
+		if isin == "" {
+			isin = strings.ToUpper(strings.TrimSpace(item.InstrumentIDCamel))
+		}
+		symbol := strings.TrimSpace(item.InstrumentNameKey)
+		if symbol == "" {
+			symbol = strings.TrimSpace(item.InstrumentNameCamel)
+		}
+		company := strings.TrimSpace(item.CompanyNameKey)
+		if company == "" {
+			company = strings.TrimSpace(item.CompanyNameCamel)
+		}
+		if symbol == "" || !marketISINPattern.MatchString(isin) {
+			continue
+		}
+		marketType := strings.TrimSpace(item.MarketCategoryName)
+		if marketType == "" {
+			marketType = strings.TrimSpace(item.MarketTypeName)
+		}
+		if marketType == "" {
+			marketType = strings.TrimSpace(item.MarketName)
+		}
+		byISIN[isin] = MarketSymbol{
+			Symbol: symbol, ISIN: isin, CompanyName: company, MarketType: marketType,
+		}
+	}
+
+	result := make([]MarketSymbol, 0, len(byISIN))
+	for _, item := range byISIN {
+		result = append(result, item)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if normalizeMarketSymbol(result[i].Symbol) == normalizeMarketSymbol(result[j].Symbol) {
+			return result[i].ISIN < result[j].ISIN
+		}
+		return normalizeMarketSymbol(result[i].Symbol) < normalizeMarketSymbol(result[j].Symbol)
+	})
+	return result, nil
+}
+
 
 // FetchSymbols reads the current cash-market shares and ETF lists from TSE's
 // public gateway. It only issues GET requests and never interacts with Rabin.
@@ -413,15 +530,38 @@ func suggestMarketSymbols(symbols []MarketSymbol, query string, limit int) []Mar
 	return result
 }
 
-func marketSymbolSuggestHandler(catalog *MarketSymbolCatalog) http.HandlerFunc {
+func marketSymbolSuggestHandler(catalog *MarketSymbolCatalog, client TSESymbolClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := strings.TrimSpace(r.URL.Query().Get("q"))
 		if query == "" {
 			http.Error(w, "حداقل یک حرف برای جست‌وجو وارد کنید", http.StatusBadRequest)
 			return
 		}
-		symbols, _, _ := catalog.Snapshot()
-		suggestions := suggestMarketSymbols(symbols, query, marketSymbolSuggestionLimit)
+
+		localSymbols, _, _ := catalog.Snapshot()
+		merged := make(map[string]MarketSymbol, len(localSymbols)+marketSymbolSuggestionLimit)
+		for _, item := range localSymbols {
+			merged[item.ISIN] = item
+		}
+
+		// Query the complete TSE directory so inactive/suspended tickers that
+		// are absent from today's market watch can still be suggested.
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		remoteSymbols, err := client.SearchSymbols(ctx, query, marketSymbolSuggestionLimit)
+		if err != nil {
+			log.Printf("TSE symbol search for %q failed; using cached market watch: %v", query, err)
+		} else {
+			for _, item := range remoteSymbols {
+				merged[item.ISIN] = item
+			}
+		}
+
+		allSymbols := make([]MarketSymbol, 0, len(merged))
+		for _, item := range merged {
+			allSymbols = append(allSymbols, item)
+		}
+		suggestions := suggestMarketSymbols(allSymbols, query, marketSymbolSuggestionLimit)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(suggestions)
