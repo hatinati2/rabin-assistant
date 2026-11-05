@@ -243,6 +243,10 @@ func (s *RabinCredentialStore) Save(username, password string) error {
 		_ = os.Remove(tmp)
 		return err
 	}
+	// A credential change invalidates the previous authenticated session.
+	if err := os.Remove(s.sessionPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("حذف نشست قبلی پس از تغییر اطلاعات ورود: %w", err)
+	}
 	if dir, err := os.Open(filepath.Dir(s.path)); err == nil {
 		_ = dir.Sync()
 		_ = dir.Close()
