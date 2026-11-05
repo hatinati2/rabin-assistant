@@ -252,11 +252,24 @@ func TestSuggestMarketSymbolsPrioritizesTickerPrefixAndLimitsResults(t *testing.
 
 func TestMarketSymbolSuggestHandler(t *testing.T) {
 	catalog := &MarketSymbolCatalog{symbols: []MarketSymbol{
-		{Symbol: "شپلی", ISIN: "IRO1SHPL0001", CompanyName: "پتروشیمی شازند"},
 		{Symbol: "شپنا", ISIN: "IRO1SHNA0001", CompanyName: "پالایش نفت اصفهان"},
 	}}
-	handler := marketSymbolSuggestHandler(catalog)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != tseInstrumentShortcutPath {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Query().Get("SimpleSearchText") != "شپ" ||
+			r.URL.Query().Get("PageNumber") != "1" ||
+			r.URL.Query().Get("PageSize") != "12" {
+			t.Errorf("unexpected InstrumentShortcut query: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"items":[{"instrumentid":"IRO1SHPL0001","instrument_Name":"شپلی","company_Name_Persian":"پتروشیمی شازند","marketcategoryname":"بازار دوم"}]}`)
+	}))
+	defer server.Close()
 
+	handler := marketSymbolSuggestHandler(catalog, TSESymbolClient{BaseURL: server.URL, HTTP: server.Client()})
 	req := httptest.NewRequest(http.MethodGet, "/api/symbols/suggest?q="+url.QueryEscape("شپ"), nil)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)
@@ -268,9 +281,47 @@ func TestMarketSymbolSuggestHandler(t *testing.T) {
 		t.Fatalf("decode suggestion response: %v", err)
 	}
 	if len(suggestions) != 2 {
-		t.Fatalf("got %d suggestions, want 2: %#v", len(suggestions), suggestions)
+		t.Fatalf("got %d suggestions, want remote شپلی plus cached شپنا: %#v", len(suggestions), suggestions)
 	}
-	if suggestions[0].ISIN == "" || suggestions[1].ISIN == "" {
-		t.Fatalf("suggestion did not include ISIN values: %#v", suggestions)
+	seen := map[string]bool{}
+	for _, item := range suggestions {
+		if item.ISIN == "" {
+			t.Fatalf("suggestion did not include ISIN values: %#v", suggestions)
+		}
+		seen[item.Symbol] = true
+	}
+	if !seen["شپلی"] || !seen["شپنا"] {
+		t.Fatalf("suggestions did not merge remote and cached symbols: %#v", suggestions)
+	}
+}
+
+func TestTSESymbolClientSearchSymbolsMapsShortcutFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != tseInstrumentShortcutPath {
+			t.Fatalf("path = %q, want %q", r.URL.Path, tseInstrumentShortcutPath)
+		}
+		if r.URL.Query().Get("SimpleSearchText") != "شپلی" ||
+			r.URL.Query().Get("PageNumber") != "1" ||
+			r.URL.Query().Get("PageSize") != "12" {
+			t.Fatalf("unexpected query: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"items":[{"instrumentid":"IRO1SHPL0001","instrument_Name":"شپلی","company_Name_Persian":"پتروشیمی شازند","marketcategoryname":"بازار دوم"}]}`)
+	}))
+	defer server.Close()
+
+	got, err := (TSESymbolClient{BaseURL: server.URL, HTTP: server.Client()}).SearchSymbols(context.Background(), "شپلی", 12)
+	if err != nil {
+		t.Fatalf("SearchSymbols: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	if got[0].Symbol != "شپلی" || got[0].ISIN != "IRO1SHPL0001" ||
+		got[0].CompanyName != "پتروشیمی شازند" || got[0].MarketType != "بازار دوم" {
+		t.Fatalf("unexpected mapped instrument: %#v", got[0])
 	}
 }
