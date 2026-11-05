@@ -96,6 +96,11 @@ def main():
                             })
                         if len(out["matches"]) >= MAX_MATCHES:
                             break
+                except Exception as exc:
+                    out.setdefault("bundle_errors", []).append({
+                        "url": clean_url(raw_url),
+                        "error": str(exc),
+                    })
 
             out.update({
                 "ok": True,
