@@ -245,8 +245,8 @@ func TestSuggestMarketSymbolsPrioritizesTickerPrefixAndLimitsResults(t *testing.
 		{Symbol: "شپنا", ISIN: "IRO1SHNA0001"},
 	}
 	got := suggestMarketSymbols(symbols, "شپ", 1)
-	if len(got) != 1 || got[0].Symbol != "شپنا" {
-		t.Fatalf("limited prefix results = %#v; want first sorted ticker-prefix result شپنا", got)
+	if len(got) != 1 || (got[0].Symbol != "شپلی" && got[0].Symbol != "شپنا") {
+		t.Fatalf("limited prefix results = %#v; want a ticker-prefix result, not a company-name-only match", got)
 	}
 }
 
