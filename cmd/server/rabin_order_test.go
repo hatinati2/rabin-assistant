@@ -119,3 +119,23 @@ func TestRabinBuyAndSellSideEnumsMatchPublicFrontend(t *testing.T) {
 		t.Fatalf("SELL enum = %d, want 2", rabinOrderSideSell)
 	}
 }
+
+func TestRabinOrderIDAcceptsScalarIDs(t *testing.T) {
+	if got := rabinOrderID(json.RawMessage(`12345`)); got != "12345" {
+		t.Fatalf("numeric order ID = %q, want 12345", got)
+	}
+	if got := rabinOrderID(json.RawMessage(`"abc-123"`)); got != "abc-123" {
+		t.Fatalf("string order ID = %q, want abc-123", got)
+	}
+}
+
+func TestRabinOrderAPIRemainsOptIn(t *testing.T) {
+	t.Setenv("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "false")
+	if rabinOrderAPICapable() {
+		t.Fatal("API order submission must be disabled by default")
+	}
+	t.Setenv("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "true")
+	if !rabinOrderAPICapable() {
+		t.Fatal("explicit API order opt-in was not recognized")
+	}
+}
