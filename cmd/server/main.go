@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	jalaali "github.com/jalaali/go-jalaali"
+	jalaali "rabin-assistant/internal/jalaali"
 )
 
 const (
