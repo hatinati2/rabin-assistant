@@ -6,18 +6,18 @@ from urllib.parse import urlsplit, urlunsplit
 
 TARGET = "https://trader.rabin.ir/"
 PATTERNS = [
-    ("api_origin", r"https?://api\\.rabin\\.ir(?:/api)?"),
-    ("base_url", r"\\bbaseURL\\s*[:=]"),
-    ("axios_create", r"\\baxios\\.create\\s*\\("),
-    ("request_interceptor", r"\\.interceptors\\.request\\.use"),
-    ("response_interceptor", r"\\.interceptors\\.response\\.use"),
-    ("authorization_header", r"Authorization\\s*[:=]"),
-    ("bearer_literal", r"Bearer\\s"),
+    ("api_origin", r"https?://api\.rabin\.ir(?:/api)?"),
+    ("base_url", r"\bbaseURL\s*[:=]"),
+    ("axios_create", r"\baxios\.create\s*\("),
+    ("request_interceptor", r"\.interceptors\.request\.use"),
+    ("response_interceptor", r"\.interceptors\.response\.use"),
+    ("authorization_header", r"Authorization\s*[:=]"),
+    ("bearer_literal", r"Bearer\s"),
     ("access_token_reference", r"accessToken"),
-    ("token_storage_reference", r"localStorage\\.(?:getItem|setItem)\\s*\\("),
-    ("order_endpoint", r"[\\\"']\\/order[\\\"']"),
-    ("order_side_payload", r"orderSide\\s*:"),
-    ("validity_type_reference", r"validityType\\s*:"),
+    ("token_storage_reference", r"localStorage\.(?:getItem|setItem)\s*\("),
+    ("order_endpoint", r"[\\"']\/order[\\"']"),
+    ("order_side_payload", r"orderSide\s*:"),
+    ("validity_type_reference", r"validityType\s*:"),
 ]
 
 def clean_url(raw):
@@ -51,7 +51,7 @@ def main():
                 urls = page.evaluate("""() => [...new Set([
                   ...[...document.scripts].map(s => s.src).filter(Boolean),
                   ...performance.getEntriesByType('resource')
-                    .filter(e => /\\.m?js(?:[?#]|$)/i.test(e.name)).map(e => e.name)
+                    .filter(e => /\.m?js(?:[?#]|$)/i.test(e.name)).map(e => e.name)
                 ])].map(raw => {
                   try {
                     const u = new URL(raw, location.href);
@@ -73,7 +73,7 @@ def main():
                             for match in re.finditer(pattern, source, re.I):
                                 left = max(0, match.start() - 900)
                                 right = min(len(source), match.end() + 1100)
-                                snippet = re.sub(r"\\s+", " ", source[left:right])
+                                snippet = re.sub(r"\s+", " ", source[left:right])
                                 result["matches"].append({
                                     "bundle": bundle_url,
                                     "label": label,
