@@ -122,3 +122,51 @@ func TestMarketSymbolCatalogKeepsLastGoodListOnRefreshFailure(t *testing.T) {
 		t.Fatalf("fallback was not retained after failure: %#v, %v, %q", items, updatedAt, lastError)
 	}
 }
+
+
+func TestLookupMarketSymbolExactMatchAndPersianNormalization(t *testing.T) {
+	symbols := []MarketSymbol{
+		{Symbol: "خودرو", ISIN: "IRO1IKCO0001"},
+		{Symbol: "فولاد", ISIN: "IRO1FOLD0001"},
+		{Symbol: "ABC", ISIN: "IRO1ABC00001"},
+	}
+
+	cases := []struct {
+		query string
+		want  string
+	}{
+		{query: "خودرو", want: "IRO1IKCO0001"},
+		{query: " فولاد ", want: "IRO1FOLD0001"},
+		{query: "abc", want: "IRO1ABC00001"},
+	}
+	for _, tc := range cases {
+		got, found, ambiguous := lookupMarketSymbol(symbols, tc.query)
+		if !found || ambiguous || got.ISIN != tc.want {
+			t.Errorf("lookupMarketSymbol(%q) = %#v, found=%v, ambiguous=%v; want ISIN %q",
+				tc.query, got, found, ambiguous, tc.want)
+		}
+	}
+
+	arabicKeyboard := []MarketSymbol{{Symbol: "کالا", ISIN: "IRO1KALA0001"}}
+	got, found, ambiguous := lookupMarketSymbol(arabicKeyboard, "كالا")
+	if !found || ambiguous || got.ISIN != "IRO1KALA0001" {
+		t.Fatalf("Arabic/Persian keyboard normalization failed: %#v, found=%v, ambiguous=%v", got, found, ambiguous)
+	}
+}
+
+func TestLookupMarketSymbolDoesNotGuessWhenTickerIsAmbiguous(t *testing.T) {
+	symbols := []MarketSymbol{
+		{Symbol: "نماد", ISIN: "IRO1AAAA0001"},
+		{Symbol: "نماد", ISIN: "IRO1BBBB0001"},
+	}
+	if _, found, ambiguous := lookupMarketSymbol(symbols, "نماد"); found || !ambiguous {
+		t.Fatalf("lookup should report ambiguity, found=%v ambiguous=%v", found, ambiguous)
+	}
+}
+
+func TestLookupMarketSymbolRequiresExactTicker(t *testing.T) {
+	symbols := []MarketSymbol{{Symbol: "خودرو", ISIN: "IRO1IKCO0001"}}
+	if _, found, ambiguous := lookupMarketSymbol(symbols, "خود"); found || ambiguous {
+		t.Fatalf("partial ticker should not resolve, found=%v ambiguous=%v", found, ambiguous)
+	}
+}
