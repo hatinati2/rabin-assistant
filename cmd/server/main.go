@@ -302,7 +302,7 @@ func validateOrder(r *http.Request, now time.Time) (Order, error) {
 	if executionMode == executionModeAPI && !rabinOrderAPICapable() {
 		return Order{}, errors.New("ارسال واقعی سفارش هنوز در تنظیمات سرور فعال و پیکربندی نشده است")
 	}
-	if executionMode != executionModeManual {
+	if executionMode != executionModeManual && executionMode != executionModeAPI {
 		return Order{}, errors.New("مسیر اجرای سفارش معتبر نیست")
 	}
 	price, priceErr := strconv.ParseInt(r.FormValue("price"), 10, 64)
