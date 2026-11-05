@@ -377,14 +377,16 @@ func suggestMarketSymbols(symbols []MarketSymbol, query string, limit int) []Mar
 		company := normalizeMarketSymbol(item.CompanyName)
 		rank := -1
 		switch {
-		case strings.HasPrefix(ticker, normalized):
+		case ticker == normalized:
 			rank = 0
-		case strings.Contains(ticker, normalized):
+		case strings.HasPrefix(ticker, normalized):
 			rank = 1
-		case company != "" && strings.HasPrefix(company, normalized):
+		case strings.Contains(ticker, normalized):
 			rank = 2
-		case company != "" && strings.Contains(company, normalized):
+		case company != "" && strings.HasPrefix(company, normalized):
 			rank = 3
+		case company != "" && strings.Contains(company, normalized):
+			rank = 4
 		}
 		if rank >= 0 {
 			ranked = append(ranked, rankedSymbol{item: item, rank: rank, key: ticker})
