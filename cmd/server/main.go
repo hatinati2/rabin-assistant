@@ -115,14 +115,20 @@ func (s *Store) add(order Order) error {
 	return nil
 }
 
-// clearHistory removes non-scheduled entries and preserves active scheduled orders.
+// clearHistory removes terminal history entries while preserving every
+// order that is active, ready, in flight, or has an ambiguous submission result.
 func (s *Store) clearHistory() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	previous := s.orders
 	kept := make([]Order, 0, len(previous))
 	for _, order := range previous {
-		if order.Status == statusScheduled {
+		switch order.Status {
+		case statusCancelled, statusManualDone, statusSubmitted, statusSubmissionFailed:
+			// Terminal history entry: remove it.
+		default:
+			// Preserve scheduled, ready, submitting, submission_unknown,
+			// and any future/unrecognized status conservatively.
 			kept = append(kept, order)
 		}
 	}
