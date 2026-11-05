@@ -429,6 +429,11 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 .scheduled{background:#eff8ff;color:#175cd3}.ready{background:#fffaeb;color:#b54708}.cancelled{background:#f2f4f7;color:#475467}
 .buy{color:#067647;font-weight:bold}.sell{color:#b42318;font-weight:bold}.empty{text-align:center;color:#667085;padding:28px}
 .foot{font-size:12px;line-height:1.8;margin-top:12px}
+.symbol-suggestions{margin-top:5px;border:1px solid #d0d5dd;border-radius:9px;background:#fff;max-height:280px;overflow:auto;box-shadow:0 8px 20px rgba(16,24,40,.10)}
+.symbol-suggestions[hidden]{display:none}
+.symbol-suggestion{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:10px 12px;border:0;border-radius:0;border-bottom:1px solid #eaecf0;background:#fff;color:#182230;text-align:right;cursor:pointer}
+.symbol-suggestion:last-child{border-bottom:0}.symbol-suggestion:hover,.symbol-suggestion:focus{background:#eff8ff;outline:none}
+.symbol-suggestion-main{display:flex;flex-direction:column;gap:4px;min-width:0}.symbol-suggestion-name{font-weight:bold}.symbol-suggestion-company{font-size:12px;color:#667085;white-space:normal}.symbol-suggestion-isin{direction:ltr;font-size:11px;color:#475467;white-space:nowrap}
 .datebox{position:relative}.datebar{display:flex;gap:8px}.datebar input{flex:1}.datebar button{white-space:nowrap}.calendar{margin-top:8px;padding:12px;border:1px solid #d0d5dd;border-radius:10px;background:#fff}.cal-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}.cal-nav{background:#f2f4f7;color:#344054;padding:7px 10px}.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;text-align:center}.cal-grid span{padding:7px 0;color:#667085;font-size:12px}.cal-day{background:#f8fafc;color:#182230;padding:9px 2px;border-radius:7px}.cal-day:hover,.cal-day.selected{background:#175cd3;color:#fff}.cal-day.today{outline:2px solid #84adff}.cal-empty{min-height:34px}
 @media(max-width:800px){.grid{grid-template-columns:1fr}.head{align-items:flex-start;gap:10px;flex-direction:column}}
 </style></head><body data-jyear="{{.JYear}}" data-jmonth="{{.JMonth}}" data-jday="{{.JDay}}"><main class="wrap">
@@ -437,9 +442,9 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="msg">{{.Notice}}</div>{{end}}
 <div class="grid{{if .History}} history{{end}}">{{if not .History}}<section class="card"><h2>تعریف سفارش</h2>
 <form id="order-form" method="post" action="/orders"><label>مسیر ثبت سفارش</label><select id="execution-mode" name="execution_mode"><option value="manual" selected>بدون API — ثبت دستی در رابین</option><option value="api" {{if not .APIAvailable}}disabled{{end}}>با API — ارسال عادی به رابین</option></select>
-<label>انتخاب نماد از فهرست</label><select id="symbol-preset"><option value="">انتخاب نماد (اختیاری)</option>{{range .Symbols}}<option value="{{.Symbol}}" data-isin="{{.ISIN}}">{{.Symbol}}{{if .CompanyName}} — {{.CompanyName}}{{end}}{{if .MarketType}} ({{.MarketType}}){{end}}</option>{{end}}</select><div class="foot">{{.SymbolCatalogStatus}}</div><label>نماد نمایشی</label><input id="order-symbol" name="symbol" maxlength="24" list="market-symbol-options" placeholder="مثلاً خودرو" required>
-<datalist id="market-symbol-options">{{range .Symbols}}<option value="{{.Symbol}}"></option>{{end}}</datalist>
-<div id="symbol-lookup-status" class="foot" aria-live="polite">می‌توانی نماد را تایپ کنی؛ ISIN به‌صورت خودکار پیدا می‌شود.</div>
+<label>انتخاب نماد از فهرست</label><select id="symbol-preset"><option value="">انتخاب نماد (اختیاری)</option>{{range .Symbols}}<option value="{{.Symbol}}" data-isin="{{.ISIN}}">{{.Symbol}}{{if .CompanyName}} — {{.CompanyName}}{{end}}{{if .MarketType}} ({{.MarketType}}){{end}}</option>{{end}}</select><div class="foot">{{.SymbolCatalogStatus}}</div><label>نماد نمایشی</label><input id="order-symbol" name="symbol" maxlength="24" placeholder="نماد را حرف‌به‌حرف تایپ کن..." autocomplete="off" aria-autocomplete="list" aria-controls="market-symbol-suggestions" aria-expanded="false" required>
+<div id="market-symbol-suggestions" class="symbol-suggestions" role="listbox" aria-label="پیشنهادهای نماد" hidden></div>
+<div id="symbol-lookup-status" class="foot" aria-live="polite">با واردکردن هر حرف، پیشنهاد نمادها نمایش داده می‌شود.</div>
 <label>شناسه ISIN (فقط برای مسیر API)</label><input id="order-isin" name="isin" maxlength="12" minlength="12" pattern="[A-Za-z]{2}[A-Za-z0-9]{9}[0-9]" placeholder="مثلاً IR..." autocomplete="off">
 <label>نوع سفارش</label><select name="side"><option value="buy">خرید</option><option value="sell">فروش</option></select>
 <label>قیمت (ریال)</label><input name="price" type="number" min="1" step="1" required>
@@ -488,70 +493,152 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
   const symbolPreset = $("symbol-preset");
   const symbolInput = $("order-symbol");
   const symbolLookupStatus = $("symbol-lookup-status");
-  let symbolLookupTimer = null;
-  let symbolLookupGeneration = 0;
+  const symbolSuggestions = $("market-symbol-suggestions");
+  let symbolSuggestionTimer = null;
+  let symbolSuggestionGeneration = 0;
 
   function showSymbolLookupStatus(message) {
     if (symbolLookupStatus) symbolLookupStatus.textContent = message;
   }
 
-  async function lookupTypedSymbol(query, generation) {
-    try {
-      const response = await fetch("/api/symbols/lookup?symbol=" + encodeURIComponent(query), {
-        headers: {"Accept": "application/json"}
-      });
-      if (generation !== symbolLookupGeneration || symbolInput.value.trim() !== query) return;
+  function normalizeSymbolText(value) {
+    return String(value || "").trim()
+      .replace(/ي/g, "ی")
+      .replace(/ك/g, "ک")
+      .replace(/\u200c/g, "")
+      .toLowerCase();
+  }
 
-      if (response.ok) {
-        const item = await response.json();
-        if (generation !== symbolLookupGeneration || symbolInput.value.trim() !== query) return;
-        if (isinInput) isinInput.value = item.isin || "";
-        showSymbolLookupStatus(item.isin ? "ISIN پیدا شد: " + item.isin : "برای این نماد ISIN پیدا نشد.");
-        return;
+  function hideSymbolSuggestions() {
+    if (!symbolSuggestions) return;
+    symbolSuggestions.hidden = true;
+    symbolSuggestions.replaceChildren();
+    if (symbolInput) symbolInput.setAttribute("aria-expanded", "false");
+  }
+
+  function selectSuggestedSymbol(item) {
+    if (symbolSuggestionTimer !== null) window.clearTimeout(symbolSuggestionTimer);
+    symbolSuggestionGeneration++;
+    symbolInput.value = item.symbol || "";
+    if (isinInput) isinInput.value = item.isin || "";
+    if (symbolPreset) symbolPreset.value = "";
+    hideSymbolSuggestions();
+    showSymbolLookupStatus(item.isin ? "ISIN پیدا شد: " + item.isin : "برای این نماد ISIN ثبت نشده است.");
+  }
+
+  function renderSymbolSuggestions(items, query) {
+    if (!symbolSuggestions) return;
+    symbolSuggestions.replaceChildren();
+
+    if (!items.length) {
+      hideSymbolSuggestions();
+      showSymbolLookupStatus("برای «" + query + "» نمادی پیدا نشد؛ املای آن را بررسی کن.");
+      return;
+    }
+
+    for (const item of items) {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = "symbol-suggestion";
+      option.setAttribute("role", "option");
+
+      const main = document.createElement("span");
+      main.className = "symbol-suggestion-main";
+      const name = document.createElement("span");
+      name.className = "symbol-suggestion-name";
+      name.textContent = item.symbol || "";
+      main.appendChild(name);
+
+      if (item.company_name || item.market_type) {
+        const description = document.createElement("span");
+        description.className = "symbol-suggestion-company";
+        description.textContent = [item.company_name, item.market_type].filter(Boolean).join(" · ");
+        main.appendChild(description);
       }
 
+      const isin = document.createElement("span");
+      isin.className = "symbol-suggestion-isin";
+      isin.textContent = item.isin || "";
+      option.append(main, isin);
+
+      // Keep focus on the input until the option is selected.
+      option.addEventListener("mousedown", (event) => event.preventDefault());
+      option.addEventListener("click", () => selectSuggestedSymbol(item));
+      symbolSuggestions.appendChild(option);
+    }
+
+    symbolSuggestions.hidden = false;
+    symbolInput.setAttribute("aria-expanded", "true");
+
+    const normalizedQuery = normalizeSymbolText(query);
+    const exactMatches = items.filter(item => normalizeSymbolText(item.symbol) === normalizedQuery);
+    if (exactMatches.length === 1 && isinInput) {
+      isinInput.value = exactMatches[0].isin || "";
+      showSymbolLookupStatus("ISIN پیدا شد: " + (exactMatches[0].isin || ""));
+    } else if (exactMatches.length > 1) {
       if (isinInput) isinInput.value = "";
-      if (response.status === 409) {
-        showSymbolLookupStatus("این نماد چند ISIN دارد؛ لطفاً آن را از فهرست بالا انتخاب کن.");
-      } else {
-        showSymbolLookupStatus("نماد دقیق پیدا نشد؛ املای نماد را بررسی کن یا از فهرست بالا انتخاب کن.");
-      }
-    } catch (_) {
-      if (generation !== symbolLookupGeneration || symbolInput.value.trim() !== query) return;
+      showSymbolLookupStatus("برای این نماد چند ISIN وجود دارد؛ مورد درست را از پیشنهادها انتخاب کن.");
+    } else {
       if (isinInput) isinInput.value = "";
-      showSymbolLookupStatus("دریافت ISIN انجام نشد؛ اتصال پنل را بررسی کن.");
+      showSymbolLookupStatus(items.length + " پیشنهاد پیدا شد؛ نماد درست را انتخاب کن.");
     }
   }
 
-  function scheduleSymbolLookup() {
-    if (symbolLookupTimer !== null) window.clearTimeout(symbolLookupTimer);
-    symbolLookupGeneration++;
-    const generation = symbolLookupGeneration;
+  async function fetchSymbolSuggestions(query, generation) {
+    try {
+      const response = await fetch("/api/symbols/suggest?q=" + encodeURIComponent(query), {
+        headers: {"Accept": "application/json"}
+      });
+      if (generation !== symbolSuggestionGeneration || symbolInput.value.trim() !== query) return;
+      if (!response.ok) throw new Error("پاسخ نامعتبر از سرویس پیشنهاد نماد");
+      const items = await response.json();
+      if (generation !== symbolSuggestionGeneration || symbolInput.value.trim() !== query) return;
+      renderSymbolSuggestions(Array.isArray(items) ? items : [], query);
+    } catch (_) {
+      if (generation !== symbolSuggestionGeneration || symbolInput.value.trim() !== query) return;
+      hideSymbolSuggestions();
+      if (isinInput) isinInput.value = "";
+      showSymbolLookupStatus("دریافت پیشنهاد نماد ممکن نشد؛ اتصال پنل را بررسی کن.");
+    }
+  }
+
+  function scheduleSymbolSuggestions() {
+    if (symbolSuggestionTimer !== null) window.clearTimeout(symbolSuggestionTimer);
+    symbolSuggestionGeneration++;
+    const generation = symbolSuggestionGeneration;
     const query = symbolInput ? symbolInput.value.trim() : "";
     if (isinInput) isinInput.value = "";
+    if (symbolPreset) symbolPreset.value = "";
+
     if (!query) {
-      showSymbolLookupStatus("می‌توانی نماد را تایپ کنی؛ ISIN به‌صورت خودکار پیدا می‌شود.");
+      hideSymbolSuggestions();
+      showSymbolLookupStatus("با واردکردن هر حرف، پیشنهاد نمادها نمایش داده می‌شود.");
       return;
     }
-    showSymbolLookupStatus("در حال پیدا کردن ISIN نماد...");
-    symbolLookupTimer = window.setTimeout(() => {
-      lookupTypedSymbol(query, generation);
-    }, 300);
+
+    showSymbolLookupStatus("در حال جست‌وجوی نمادها...");
+    symbolSuggestionTimer = window.setTimeout(() => {
+      fetchSymbolSuggestions(query, generation);
+    }, 100);
   }
 
   if (symbolInput) {
-    symbolInput.addEventListener("input", scheduleSymbolLookup);
-    symbolInput.addEventListener("change", scheduleSymbolLookup);
-    symbolInput.addEventListener("blur", scheduleSymbolLookup);
+    symbolInput.addEventListener("input", scheduleSymbolSuggestions);
+    symbolInput.addEventListener("change", scheduleSymbolSuggestions);
+    symbolInput.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") hideSymbolSuggestions();
+    });
   }
+
   if (symbolPreset) {
     symbolPreset.addEventListener("change", () => {
       const option = symbolPreset.selectedOptions[0];
       if (!option || !option.value) return;
-      if (symbolLookupTimer !== null) window.clearTimeout(symbolLookupTimer);
-      symbolLookupGeneration++;
+      if (symbolSuggestionTimer !== null) window.clearTimeout(symbolSuggestionTimer);
+      symbolSuggestionGeneration++;
       symbolInput.value = option.value;
       if (isinInput) isinInput.value = option.dataset.isin || "";
+      hideSymbolSuggestions();
       showSymbolLookupStatus(isinInput && isinInput.value ? "ISIN پیدا شد: " + isinInput.value : "");
     });
   }
@@ -714,6 +801,7 @@ func main() {
 		_ = json.NewEncoder(w).Encode(data)
 	})
 	mux.HandleFunc("GET /api/symbols/lookup", marketSymbolLookupHandler(symbolCatalog))
+	mux.HandleFunc("GET /api/symbols/suggest", marketSymbolSuggestHandler(symbolCatalog))
 	renderOrdersPage := func(w http.ResponseWriter, r *http.Request, history bool) {
 		now := time.Now().In(tehran())
 		if err := store.markDue(now); err != nil {
