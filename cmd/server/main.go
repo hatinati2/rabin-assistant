@@ -172,13 +172,29 @@ func parseJalaliDateTime(raw string) (time.Time, error) {
 
 	timeParts := strings.Split(fields[1], ":")
 	if len(timeParts) != 3 {
-		return time.Time{}, errors.New("ساعت باید شامل ساعت، دقیقه و ثانیه باشد")
+		return time.Time{}, errors.New("ساعت باید به شکل ساعت:دقیقه:ثانیه و میلی‌ثانیه اختیاری باشد")
+	}
+	secondParts := strings.Split(timeParts[2], ".")
+	if len(secondParts) > 2 {
+		return time.Time{}, errors.New("فرمت میلی‌ثانیه نامعتبر است")
 	}
 	hour, errH := strconv.Atoi(timeParts[0])
 	minute, errMin := strconv.Atoi(timeParts[1])
-	second, errSec := strconv.Atoi(timeParts[2])
+	second, errSec := strconv.Atoi(secondParts[0])
+	millisecond := 0
+	if len(secondParts) == 2 {
+		fraction := secondParts[1]
+		if len(fraction) < 1 || len(fraction) > 3 {
+			return time.Time{}, errors.New("میلی‌ثانیه باید یک تا سه رقم باشد")
+		}
+		for len(fraction) < 3 {
+			fraction += "0"
+		}
+		millisecond, errSec = strconv.Atoi(fraction)
+	}
 	if errH != nil || errMin != nil || errSec != nil ||
-		hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 {
+		hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 ||
+		millisecond < 0 || millisecond > 999 {
 		return time.Time{}, errors.New("ساعت واردشده معتبر نیست")
 	}
 
@@ -186,15 +202,18 @@ func parseJalaliDateTime(raw string) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, fmt.Errorf("تبدیل تاریخ شمسی: %w", err)
 	}
-	return time.Date(gy, gm, gd, hour, minute, second, 0, tehran()), nil
+	return time.Date(gy, gm, gd, hour, minute, second, millisecond*int(time.Millisecond), tehran()), nil
 }
 
 func formatJalaliDateTime(t time.Time) string {
-	formatted, err := jalaali.From(t.In(tehran())).JFormat("2006/01/02 15:04:05")
+	local := t.In(tehran())
+	formatted, err := jalaali.From(local).JFormat("2006/01/02 15:04:05")
 	if err != nil {
-		return t.In(tehran()).Format("2006/01/02 15:04:05")
+		formatted = local.Format("2006/01/02 15:04:05")
 	}
-	return formatted
+	millis := fmt.Sprintf("%03d", local.Nanosecond()/int(time.Millisecond))
+	persianMillis := strings.NewReplacer("0", "۰", "1", "۱", "2", "۲", "3", "۳", "4", "۴", "5", "۵", "6", "۶", "7", "۷", "8", "۸", "9", "۹").Replace(millis)
+	return formatted + "٫" + persianMillis
 }
 
 var symbolPattern = regexp.MustCompile(`^[\p{L}\p{N}._-]{1,24}$`)
@@ -331,7 +350,7 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
     <div class="cal-grid" id="cal-days"></div>
   </div>
 </div>
-<label>ساعت اجرا (تهران)</label><input id="execute-time" name="execute_time" type="time" step="1" value="08:44:50" required>
+<label>ساعت اجرا (تهران، با دقت میلی‌ثانیه)</label><input id="execute-time" name="execute_time" type="time" step="0.001" value="08:44:50.000" required>
 <button class="submit" type="submit">ذخیره سفارش</button></form>
 <div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود.</div></section>
 <section class="card"><h2>سفارش‌ها ({{len .Orders}})</h2><div class="tablewrap"><table>
