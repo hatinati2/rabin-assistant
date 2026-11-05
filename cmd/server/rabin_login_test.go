@@ -14,7 +14,7 @@ import (
 func TestRabinLoginClientSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/authentication/login" {
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		var body map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -28,16 +28,15 @@ func TestRabinLoginClientSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	previous := rabinLoginEndpoint
-	_ = previous
-	client := RabinLoginClient{HTTP: server.Client()}
-	// Exercise the production URL through a test client transport override.
-	client.HTTP = &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			clone := req.Clone(req.Context())
-			clone.URL = server.URL + "/api/authentication/login"
-			return server.Client().Do(clone)
-		}),
+	client := RabinLoginClient{
+		HTTP: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				clone := req.Clone(req.Context())
+				clone.URL.Scheme = "http"
+				clone.URL.Host = server.Listener.Addr().String()
+				return server.Client().Do(clone)
+			}),
+		},
 	}
 	token, err := client.Login(context.Background(), "unit-user", "unit-pass")
 	if err != nil {
