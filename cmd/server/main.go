@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -554,11 +555,24 @@ func renderError(w http.ResponseWriter, store *Store, message string) {
 }
 
 func sameOrigin(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
+	// Prefer the Origin header for POST requests. Some browsers or proxies omit
+	// it for ordinary form submissions, so fall back to Referer and then
+	// Fetch Metadata when available.
+	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" {
+		return sameHostURL(origin, r.Host)
+	}
+	if referer := strings.TrimSpace(r.Referer()); referer != "" {
+		return sameHostURL(referer, r.Host)
+	}
+	return strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "same-origin")
+}
+
+func sameHostURL(rawURL, requestHost string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" || requestHost == "" {
 		return false
 	}
-	return strings.EqualFold(origin, "http://"+r.Host) || strings.EqualFold(origin, "https://"+r.Host)
+	return strings.EqualFold(u.Host, requestHost)
 }
 
 func basicAuth(user, pass string, next http.Handler) http.Handler {
