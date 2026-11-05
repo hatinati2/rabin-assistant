@@ -16,7 +16,12 @@ SCREENSHOT = Path(os.environ.get(
     "RABIN_BROWSER_DIAG_PATH",
     "/var/lib/rabin-assistant/browser-preflight.png",
 ))
-PATTERNS = ("userName", "login-btn", "password", "login", "auth")
+PATTERNS = (
+    "/authentication/login", "hasAvoidToUseVirtualKeyboardConfirmed",
+    "please-enter-security-code", "/authentication/captcha",
+    "/authentication/2fa", "/pre-order/send", "/pre-order",
+    "/order/batch", '"/order"', "submitOrder",
+)
 
 def emit(data):
     print(json.dumps(data, ensure_ascii=False, indent=2), flush=True)
@@ -150,12 +155,12 @@ def main():
                             idx = source.find(pattern, start)
                             if idx < 0:
                                 break
-                            lo, hi = max(0, idx - 180), min(len(source), idx + 260)
+                            lo, hi = max(0, idx - 450), min(len(source), idx + 650)
                             snippet = re.sub(r"\\s+", " ", source[lo:hi])
                             js_matches.append({
                                 "script": script_url,
                                 "pattern": pattern,
-                                "snippet": snippet[:500]
+                                "snippet": snippet[:1100]
                             })
                             start = idx + len(pattern)
                             found += 1
