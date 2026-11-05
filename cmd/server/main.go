@@ -158,7 +158,7 @@ func parseJalaliDateTime(raw string) (time.Time, error) {
 		return time.Time{}, errors.New("فرمت تاریخ و ساعت باید مانند 1405/08/14 08:44:50 باشد")
 	}
 
-	dateParts := strings.FieldsFunc(fields[0], func(r rune) bool { return r == '/' || r == '-' })
+	dateParts := strings.FieldsFunc(fields[0], func(r rune) bool { return r == '/' || r == '-' || r == '.' })
 	if len(dateParts) != 3 {
 		return time.Time{}, errors.New("فرمت تاریخ شمسی نامعتبر است")
 	}
