@@ -289,3 +289,39 @@ func marketSymbolCatalogStatus(catalog *MarketSymbolCatalog) ([]MarketSymbol, st
 	}
 	return items, "در حال دریافت فهرست نمادها از درگاه TSE؛ در صورت نبود دسترسی، فهرست پشتیبان نمایش داده می‌شود."
 }
+
+
+// normalizeMarketSymbol handles common Arabic/Persian keyboard variants while
+// keeping punctuation that may be part of a ticker.
+func normalizeMarketSymbol(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.NewReplacer(
+		"ي", "ی",
+		"ك", "ک",
+		"\u200c", "",
+	).Replace(value)
+	return strings.ToLower(value)
+}
+
+// lookupMarketSymbol only resolves exact ticker matches. When a ticker maps to
+// multiple ISINs, it reports ambiguity instead of guessing the instrument.
+func lookupMarketSymbol(symbols []MarketSymbol, query string) (MarketSymbol, bool, bool) {
+	normalized := normalizeMarketSymbol(query)
+	if normalized == "" {
+		return MarketSymbol{}, false, false
+	}
+
+	var match MarketSymbol
+	found := false
+	for _, item := range symbols {
+		if normalizeMarketSymbol(item.Symbol) != normalized {
+			continue
+		}
+		if found && match.ISIN != item.ISIN {
+			return MarketSymbol{}, false, true
+		}
+		match = item
+		found = true
+	}
+	return match, found, false
+}
