@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"net/url"
 )
 
 func TestTSESymbolClientFetchesCashAndETF(t *testing.T) {
@@ -168,5 +170,39 @@ func TestLookupMarketSymbolRequiresExactTicker(t *testing.T) {
 	symbols := []MarketSymbol{{Symbol: "خودرو", ISIN: "IRO1IKCO0001"}}
 	if _, found, ambiguous := lookupMarketSymbol(symbols, "خود"); found || ambiguous {
 		t.Fatalf("partial ticker should not resolve, found=%v ambiguous=%v", found, ambiguous)
+	}
+}
+
+
+func TestMarketSymbolLookupHandler(t *testing.T) {
+	catalog := &MarketSymbolCatalog{symbols: []MarketSymbol{
+		{Symbol: "خودرو", ISIN: "IRO1IKCO0001"},
+		{Symbol: "فولاد", ISIN: "IRO1FOLD0001"},
+	}}
+	handler := marketSymbolLookupHandler(catalog)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/symbols/lookup?symbol="+url.QueryEscape("خودرو"), nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("lookup status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var found MarketSymbol
+	if err := json.Unmarshal(recorder.Body.Bytes(), &found); err != nil {
+		t.Fatalf("decode lookup response: %v", err)
+	}
+	if found.Symbol != "خودرو" || found.ISIN != "IRO1IKCO0001" {
+		t.Fatalf("lookup response = %#v", found)
+	}
+
+	ambiguousCatalog := &MarketSymbolCatalog{symbols: []MarketSymbol{
+		{Symbol: "دوگانه", ISIN: "IRO1AAAA0001"},
+		{Symbol: "دوگانه", ISIN: "IRO1BBBB0001"},
+	}}
+	ambiguousRecorder := httptest.NewRecorder()
+	ambiguousRequest := httptest.NewRequest(http.MethodGet, "/api/symbols/lookup?symbol="+url.QueryEscape("دوگانه"), nil)
+	marketSymbolLookupHandler(ambiguousCatalog).ServeHTTP(ambiguousRecorder, ambiguousRequest)
+	if ambiguousRecorder.Code != http.StatusConflict {
+		t.Fatalf("ambiguous lookup status = %d, want %d", ambiguousRecorder.Code, http.StatusConflict)
 	}
 }
