@@ -8,16 +8,20 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
 
 const rabinOrderEndpoint = "https://api.rabin.ir/api/order"
 
+const (
+	rabinOrderSideBuy  = 1
+	rabinOrderSideSell = 2
+)
+
 type RabinOrderClient struct {
-	URL    string
-	HTTP   *http.Client
+	URL  string
+	HTTP *http.Client
 }
 
 type rabinOrderPayload struct {
@@ -26,7 +30,7 @@ type rabinOrderPayload struct {
 	Price        int64           `json:"price"`
 	ValidityType int             `json:"validityType"`
 	ValidityDate *string         `json:"validityDate"`
-	OrderSide    json.RawMessage `json:"orderSide"`
+	OrderSide    int             `json:"orderSide"`
 }
 
 type RabinSubmitResult struct {
@@ -36,24 +40,23 @@ type RabinSubmitResult struct {
 }
 
 func rabinOrderAPICapable() bool {
-	enabled := strings.EqualFold(env("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "false"), "true")
-	buy := strings.TrimSpace(os.Getenv("RABIN_ORDER_SIDE_BUY_JSON"))
-	sell := strings.TrimSpace(os.Getenv("RABIN_ORDER_SIDE_SELL_JSON"))
-	return enabled && json.Valid([]byte(buy)) && json.Valid([]byte(sell))
+	return strings.EqualFold(env("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "false"), "true")
 }
 
-func (c RabinOrderClient) Submit(ctx context.Context, token string, order Order, orderSideJSON string) (RabinSubmitResult, error) {
+func (c RabinOrderClient) Submit(ctx context.Context, token string, order Order) (RabinSubmitResult, error) {
 	if strings.TrimSpace(token) == "" {
 		return RabinSubmitResult{}, errors.New("نشست رابین موجود نیست؛ ابتدا اتصال رابین را آزمایش کنید")
 	}
 	if strings.TrimSpace(order.ISIN) == "" {
 		return RabinSubmitResult{}, errors.New("شناسه ISIN برای ارسال سفارش وارد نشده است")
 	}
-	side := json.RawMessage(strings.TrimSpace(orderSideJSON))
-	if len(side) == 0 || !json.Valid(side) {
-		return RabinSubmitResult{}, errors.New("کد نوع سفارش خرید/فروش در تنظیمات سرور معتبر نیست")
-	}
-	if order.Side != "buy" && order.Side != "sell" {
+	side := 0
+	switch order.Side {
+	case "buy":
+		side = rabinOrderSideBuy
+	case "sell":
+		side = rabinOrderSideSell
+	default:
 		return RabinSubmitResult{}, errors.New("نوع سفارش نامعتبر است")
 	}
 	payload := rabinOrderPayload{
