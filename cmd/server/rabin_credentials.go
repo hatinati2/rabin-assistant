@@ -28,16 +28,19 @@ type encryptedRabinCredentials struct {
 }
 
 type RabinCredentialStore struct {
-	mu      sync.Mutex
-	path    string
-	keyPath string
+	mu          sync.Mutex
+	path        string
+	sessionPath string
+	keyPath     string
 }
 
 type RabinSettingsPageData struct {
-	Username string
-	Saved    bool
-	Error    string
-	Notice   string
+	Username   string
+	Saved      bool
+	HasSession bool
+	LoginAt    string
+	Error      string
+	Notice     string
 }
 
 var rabinSettingsPage = template.Must(template.New("rabin-settings").Parse(`<!doctype html>
@@ -79,14 +82,19 @@ button{border:0;border-radius:8px;background:#175cd3;color:#fff;padding:10px 14p
 <div class="row"><button class="danger" type="submit">حذف اطلاعات ذخیره‌شده</button></div>
 </form>
 {{end}}
-<div class="note"><b>وضعیت این مرحله:</b> اطلاعات ورود به‌صورت رمزنگاری‌شده در سرور نگهداری می‌شوند. دکمهٔ «تست ورود» پس از تکمیل و بررسی دقیق جریان احراز هویت رابین فعال خواهد شد. در این مرحله هیچ درخواستی برای ورود به رابین و هیچ سفارشی ارسال نمی‌شود.</div>
+{{if .HasSession}}<div class="msg">آخرین ورود عادی رابین با موفقیت انجام شد: {{.LoginAt}}. توکن نشست نیز به‌صورت رمزنگاری‌شده روی سرور ذخیره شده است.</div>{{else}}<div class="note">اطلاعات ورود در سرور به‌صورت رمزنگاری‌شده نگهداری می‌شوند. هنوز ورود موفقی برای این حساب ثبت نشده است.</div>{{end}}
+<form method="post" action="/settings/rabin-login">
+<div class="row"><button type="submit" {{if not .Saved}}disabled title="ابتدا اطلاعات ورود را ذخیره کنید"{{end}}>تست ورود با نام کاربری و رمز ذخیره‌شده</button></div>
+</form>
+<div class="foot">این دکمه فقط ورود عادی و دریافت نشست را آزمایش می‌کند؛ هیچ سفارش خرید یا فروشی ارسال نمی‌شود. در این نسخه فیلد یا مرحله‌ای برای رمز دومرحله‌ای وجود ندارد.</div>
 <div class="foot">رمز عبور در صفحه دوباره نمایش داده نمی‌شود. پس از ثبت، برای حفظ رمز قبلی کادر رمز را خالی بگذارید. برای جایگزینی رمز، رمز جدید را وارد کنید.</div>
 </section></main></body></html>`))
 
 func NewRabinCredentialStore(dataDir, keyPath string) *RabinCredentialStore {
 	return &RabinCredentialStore{
-		path: filepath.Join(dataDir, "rabin-credentials.enc.json"),
-		keyPath: keyPath,
+		path:        filepath.Join(dataDir, "rabin-credentials.enc.json"),
+		sessionPath: filepath.Join(dataDir, "rabin-session.enc.json"),
+		keyPath:     keyPath,
 	}
 }
 
@@ -252,14 +260,143 @@ func (s *RabinCredentialStore) Status() (string, bool, error) {
 	return username, password != "", nil
 }
 
+func (s *RabinCredentialStore) Load() (string, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadLocked()
+}
+
+func (s *RabinCredentialStore) SaveAccessToken(token string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if token == "" || len(token) > 64<<10 || strings.ContainsRune(token, '\\x00') {
+		return errors.New("توکن دریافتی رابین معتبر نیست")
+	}
+	key, err := s.readKey()
+	if err != nil {
+		return err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return fmt.Errorf("تولید nonce نشست: %w", err)
+	}
+	ciphertext := gcm.Seal(nil, nonce, []byte(token), []byte("rabin-assistant/rabin-session/v1"))
+	record := encryptedRabinCredentials{
+		Version: 1,
+		Nonce: base64.StdEncoding.EncodeToString(nonce),
+		Ciphertext: base64.StdEncoding.EncodeToString(ciphertext),
+		UpdatedAt: time.Now().UTC(),
+	}
+	encoded, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.sessionPath), 0700); err != nil {
+		return err
+	}
+	tmp := s.sessionPath + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	_, writeErr := f.Write(encoded)
+	if writeErr == nil {
+		writeErr = f.Sync()
+	}
+	closeErr := f.Close()
+	if writeErr != nil {
+		_ = os.Remove(tmp)
+		return writeErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmp)
+		return closeErr
+	}
+	if err := os.Rename(tmp, s.sessionPath); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if dir, err := os.Open(filepath.Dir(s.sessionPath)); err == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
+	}
+	return nil
+}
+
+func (s *RabinCredentialStore) LoadAccessToken() (string, time.Time, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := os.ReadFile(s.sessionPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", time.Time{}, nil
+	}
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("خواندن نشست رابین: %w", err)
+	}
+	var record encryptedRabinCredentials
+	if err := json.Unmarshal(data, &record); err != nil {
+		return "", time.Time{}, errors.New("ساختار فایل نشست رابین معتبر نیست")
+	}
+	if record.Version != 1 {
+		return "", time.Time{}, errors.New("نسخه فایل نشست رابین پشتیبانی نمی‌شود")
+	}
+	nonce, err := base64.StdEncoding.DecodeString(record.Nonce)
+	if err != nil {
+		return "", time.Time{}, errors.New("nonce نشست رابین نامعتبر است")
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(record.Ciphertext)
+	if err != nil {
+		return "", time.Time{}, errors.New("داده نشست رابین نامعتبر است")
+	}
+	key, err := s.readKey()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if len(nonce) != gcm.NonceSize() {
+		return "", time.Time{}, errors.New("اندازه nonce نشست رابین نامعتبر است")
+	}
+	plain, err := gcm.Open(nil, nonce, ciphertext, []byte("rabin-assistant/rabin-session/v1"))
+	if err != nil {
+		return "", time.Time{}, errors.New("رمزگشایی نشست رابین ناموفق بود")
+	}
+	if len(plain) == 0 {
+		return "", time.Time{}, errors.New("توکن نشست رابین خالی است")
+	}
+	return string(plain), record.UpdatedAt, nil
+}
+
+func (s *RabinCredentialStore) SessionStatus() (time.Time, bool, error) {
+	token, updatedAt, err := s.LoadAccessToken()
+	return updatedAt, token != "", err
+}
+
 func (s *RabinCredentialStore) Delete() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	err := os.Remove(s.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
+	var firstErr error
+	for _, path := range []string{s.path, s.sessionPath} {
+		err := os.Remove(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) && firstErr == nil {
+			firstErr = err
+		}
 	}
-	return err
+	return firstErr
 }
 
 func (s *RabinCredentialStore) Render(w http.ResponseWriter, errorMessage, notice string) {
