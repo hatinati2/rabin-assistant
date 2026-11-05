@@ -40,7 +40,7 @@ systemctl restart rabin-assistant
 - `RABIN_ADDR` (پیش‌فرض `0.0.0.0:8098`)
 - `RABIN_DATA_DIR` (پیش‌فرض `/var/lib/rabin-assistant`)
 
-منطقه زمانی برنامه `Asia/Tehran` است.
+نصب‌کننده منطقه زمانی خود سرور را روی `Asia/Tehran` تنظیم می‌کند. نمایش ساعت، ثبت زمان سفارش و زمان‌بندی همگی بر اساس ساعت ایران هستند.
 
 ## وضعیت نسخه فعلی
 
