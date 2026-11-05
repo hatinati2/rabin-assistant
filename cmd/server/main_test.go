@@ -1,6 +1,9 @@
 package main
 
 import (
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -66,5 +69,28 @@ func TestCurrentJalaliParts(t *testing.T) {
 	y, m, d := currentJalaliParts(input)
 	if y != 1405 || m != 8 || d != 14 {
 		t.Fatalf("got %04d/%02d/%02d, want 1405/08/14", y, m, d)
+	}
+}
+
+func TestValidateOrderAcceptsManualJalaliDateAndTimeFields(t *testing.T) {
+	now := time.Date(2026, time.November, 5, 8, 40, 0, 0, tehran())
+	form := url.Values{
+		"symbol":          {"TEST"},
+		"side":            {"buy"},
+		"price":           {"1000"},
+		"quantity":        {"10"},
+		"execute_at_date": {"۱۴۰۵/۰۸/۱۴"},
+		"execute_time":    {"08:44:50"},
+	}
+	req := httptest.NewRequest("POST", "/orders", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	order, err := validateOrder(req, now)
+	if err != nil {
+		t.Fatalf("validateOrder with manual date fields: %v", err)
+	}
+	want := time.Date(2026, time.November, 5, 8, 44, 50, 0, tehran())
+	if !order.ExecuteAt.Equal(want) {
+		t.Fatalf("execute time = %s, want %s", order.ExecuteAt, want)
 	}
 }
