@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"strings"
 	"time"
 )
 
@@ -24,12 +23,8 @@ func dispatchReadyRabinOrders(store *Store, credentials *RabinCredentialStore, n
 		return
 	}
 	for _, order := range claimed {
-		sideJSON := strings.TrimSpace(env(
-			map[bool]string{true: "RABIN_ORDER_SIDE_BUY_JSON", false: "RABIN_ORDER_SIDE_SELL_JSON"}[order.Side == "buy"],
-			"",
-		))
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		result, submitErr := (RabinOrderClient{}).Submit(ctx, token, order, sideJSON)
+		result, submitErr := (RabinOrderClient{}).Submit(ctx, token, order)
 		cancel()
 
 		finalStatus := statusSubmitted
