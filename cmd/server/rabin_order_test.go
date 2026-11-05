@@ -30,7 +30,7 @@ func TestRabinOrderClientSubmitsNormalOrderOnce(t *testing.T) {
 			t.Errorf("decode order body: %v", err)
 			return
 		}
-		if body.ISIN != "IR1234567890" || body.Quantity != 2 || body.Price != 123456 || body.ValidityType != 1 || body.ValidityDate != nil || string(body.OrderSide != rabinOrderSideBuy {
+		if body.ISIN != "IR1234567890" || body.Quantity != 2 || body.Price != 123456 || body.ValidityType != 1 || body.ValidityDate != nil || body.OrderSide != rabinOrderSideBuy {
 			t.Errorf("unexpected order payload: %+v", body)
 			return
 		}
