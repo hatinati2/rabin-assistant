@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -213,20 +214,18 @@ func (c *MarketSymbolCatalog) Refresh(ctx context.Context, client TSESymbolClien
 	}
 
 	updatedAt := time.Now().In(tehran())
+	cacheErr := error(nil)
 	if c.cachePath != "" {
-		if err := c.saveCache(marketSymbolCache{UpdatedAt: updatedAt, Symbols: symbols}); err != nil {
-			// The in-memory result is still useful even when the disk cache cannot be written.
-			c.mu.Lock()
-			c.lastError = "فهرست دریافت شد، اما ذخیره نسخه محلی ممکن نشد"
-			c.mu.Unlock()
-		}
+		// The in-memory result is still useful even when the disk cache cannot be written.
+		cacheErr = c.saveCache(marketSymbolCache{UpdatedAt: updatedAt, Symbols: symbols})
 	}
 
 	c.mu.Lock()
 	c.symbols = append([]MarketSymbol(nil), symbols...)
 	c.updatedAt = updatedAt
-	if c.lastError == "" || c.lastError == "فهرست دریافت شد، اما ذخیره نسخه محلی ممکن نشد" {
-		c.lastError = ""
+	c.lastError = ""
+	if cacheErr != nil {
+		c.lastError = "فهرست دریافت شد، اما ذخیره نسخه محلی ممکن نشد"
 	}
 	c.mu.Unlock()
 	return nil
