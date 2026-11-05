@@ -206,3 +206,71 @@ func TestMarketSymbolLookupHandler(t *testing.T) {
 		t.Fatalf("ambiguous lookup status = %d, want %d", ambiguousRecorder.Code, http.StatusConflict)
 	}
 }
+
+
+func TestSuggestMarketSymbolsReturnsPrefixAndSubstringMatches(t *testing.T) {
+	symbols := []MarketSymbol{
+		{Symbol: "شپلی", ISIN: "IRO1SHPL0001", CompanyName: "پتروشیمی شازند"},
+		{Symbol: "شپنا", ISIN: "IRO1SHNA0001", CompanyName: "پالایش نفت اصفهان"},
+		{Symbol: "فولاد", ISIN: "IRO1FOLD0001", CompanyName: "فولاد مبارکه"},
+		{Symbol: "پلیمر", ISIN: "IRO1PLMR0001", CompanyName: "پلیمر"},
+	}
+
+	got := suggestMarketSymbols(symbols, "شپ", 12)
+	if len(got) != 2 {
+		t.Fatalf("suggestMarketSymbols returned %d entries, want 2: %#v", len(got), got)
+	}
+	if got[0].Symbol != "شپنا" && got[0].Symbol != "شپلی" {
+		t.Fatalf("prefix suggestions did not include the expected ticker: %#v", got)
+	}
+	seen := map[string]bool{}
+	for _, item := range got {
+		seen[item.Symbol] = true
+	}
+	if !seen["شپلی"] || !seen["شپنا"] {
+		t.Fatalf("suggestions for شپ = %#v; want شپلی and شپنا", got)
+	}
+
+	inside := suggestMarketSymbols(symbols, "پلی", 12)
+	if len(inside) != 2 {
+		t.Fatalf("substring suggestions = %#v; want شپلی and پلیمر", inside)
+	}
+}
+
+func TestSuggestMarketSymbolsPrioritizesTickerPrefixAndLimitsResults(t *testing.T) {
+	symbols := []MarketSymbol{
+		{Symbol: "نامربوط", CompanyName: "شپ شرکت"},
+		{Symbol: "فولاد", CompanyName: "فولاد"},
+		{Symbol: "شپلی", ISIN: "IRO1SHPL0001"},
+		{Symbol: "شپنا", ISIN: "IRO1SHNA0001"},
+	}
+	got := suggestMarketSymbols(symbols, "شپ", 1)
+	if len(got) != 1 || got[0].Symbol != "شپنا" {
+		t.Fatalf("limited prefix results = %#v; want first sorted ticker-prefix result شپنا", got)
+	}
+}
+
+func TestMarketSymbolSuggestHandler(t *testing.T) {
+	catalog := &MarketSymbolCatalog{symbols: []MarketSymbol{
+		{Symbol: "شپلی", ISIN: "IRO1SHPL0001", CompanyName: "پتروشیمی شازند"},
+		{Symbol: "شپنا", ISIN: "IRO1SHNA0001", CompanyName: "پالایش نفت اصفهان"},
+	}}
+	handler := marketSymbolSuggestHandler(catalog)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/symbols/suggest?q="+url.QueryEscape("شپ"), nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("suggest status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var suggestions []MarketSymbol
+	if err := json.Unmarshal(recorder.Body.Bytes(), &suggestions); err != nil {
+		t.Fatalf("decode suggestion response: %v", err)
+	}
+	if len(suggestions) != 2 {
+		t.Fatalf("got %d suggestions, want 2: %#v", len(suggestions), suggestions)
+	}
+	if suggestions[0].ISIN == "" || suggestions[1].ISIN == "" {
+		t.Fatalf("suggestion did not include ISIN values: %#v", suggestions)
+	}
+}
