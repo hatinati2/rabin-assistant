@@ -142,6 +142,14 @@ func rabinOrderID(raw json.RawMessage) string {
 	if len(raw) == 0 || string(raw) == "null" {
 		return ""
 	}
+	var scalar string
+	if json.Unmarshal(raw, &scalar) == nil {
+		return scalar
+	}
+	var number json.Number
+	if json.Unmarshal(raw, &number) == nil && number.String() != "" {
+		return number.String()
+	}
 	var values map[string]json.RawMessage
 	if json.Unmarshal(raw, &values) != nil {
 		return ""
