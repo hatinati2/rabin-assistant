@@ -214,3 +214,45 @@ func TestSameOriginRejectsCrossSiteRequests(t *testing.T) {
 		t.Fatal("sameOrigin accepted a cross-site Referer")
 	}
 }
+
+func TestClearHistoryPreservesActiveAndAmbiguousOrders(t *testing.T) {
+	path := t.TempDir() + "/orders.json"
+	store, err := newStore(path)
+	if err != nil {
+		t.Fatalf("newStore: %v", err)
+	}
+	statuses := []string{
+		statusScheduled, statusReady, statusSubmitting, statusSubmissionUnknown,
+		statusCancelled, statusManualDone, statusSubmitted, statusSubmissionFailed,
+		"future_status",
+	}
+	for _, status := range statuses {
+		store.orders = append(store.orders, Order{ID: status, Status: status})
+	}
+	if err := store.saveLocked(); err != nil {
+		t.Fatalf("save before clear: %v", err)
+	}
+	if err := store.clearHistory(); err != nil {
+		t.Fatalf("clearHistory: %v", err)
+	}
+	got, err := newStore(path)
+	if err != nil {
+		t.Fatalf("reload store: %v", err)
+	}
+	want := map[string]bool{
+		statusScheduled: true, statusReady: true, statusSubmitting: true,
+		statusSubmissionUnknown: true, "future_status": true,
+	}
+	if len(got.orders) != len(want) {
+		t.Fatalf("remaining orders = %d, want %d: %#v", len(got.orders), len(want), got.orders)
+	}
+	for _, order := range got.orders {
+		if !want[order.Status] {
+			t.Errorf("terminal status %q should have been removed", order.Status)
+		}
+		delete(want, order.Status)
+	}
+	if len(want) != 0 {
+		t.Errorf("these active/ambiguous statuses were removed: %#v", want)
+	}
+}
