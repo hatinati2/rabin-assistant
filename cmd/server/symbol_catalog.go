@@ -325,3 +325,29 @@ func lookupMarketSymbol(symbols []MarketSymbol, query string) (MarketSymbol, boo
 	}
 	return match, found, false
 }
+
+
+func marketSymbolLookupHandler(catalog *MarketSymbolCatalog) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		query := strings.TrimSpace(r.URL.Query().Get("symbol"))
+		if query == "" {
+			http.Error(w, "پارامتر نماد لازم است", http.StatusBadRequest)
+			return
+		}
+
+		symbols, _, _ := catalog.Snapshot()
+		item, found, ambiguous := lookupMarketSymbol(symbols, query)
+		if ambiguous {
+			http.Error(w, "این نماد بیش از یک ISIN دارد؛ آن را از فهرست نمادها انتخاب کنید", http.StatusConflict)
+			return
+		}
+		if !found {
+			http.Error(w, "نماد دقیق در فهرست بازار پیدا نشد", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(item)
+	}
+}
