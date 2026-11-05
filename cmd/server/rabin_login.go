@@ -111,15 +111,9 @@ func rabinLoginMessage(raw json.RawMessage) string {
 }
 
 func cleanRabinLoginMessage(value string) string {
-	value = strings.Map(func(r rune) rune {
-		if r < 0x20 && r != '\\t' {
-			return -1
-		}
-		return r
-	}, strings.TrimSpace(value))
+	value = strings.TrimSpace(value)
 	if len(value) > 400 {
 		value = value[:400]
 	}
 	return value
-}
 }
