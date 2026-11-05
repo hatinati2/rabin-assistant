@@ -26,22 +26,30 @@ const (
 	statusScheduled     = "scheduled"
 	statusReady         = "ready"
 	statusCancelled     = "cancelled"
-	statusManualDone    = "manual_done"
-	executionModeManual = "manual"
-	executionModeAPI    = "api"
+	statusManualDone        = "manual_done"
+	statusSubmitting        = "submitting"
+	statusSubmitted         = "submitted"
+	statusSubmissionFailed  = "submission_failed"
+	statusSubmissionUnknown = "submission_unknown"
+	executionModeManual     = "manual"
+	executionModeAPI        = "api"
 )
 
 type Order struct {
-	ID        string    `json:"id"`
-	Symbol    string    `json:"symbol"`
-	Side      string    `json:"side"`
-	Price     int64     `json:"price"`
-	Quantity  int64     `json:"quantity"`
-	ExecuteAt     time.Time `json:"execute_at"`
-	ExecutionMode string    `json:"execution_mode,omitempty"`
-	Status        string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID             string    `json:"id"`
+	Symbol         string    `json:"symbol"`
+	ISIN           string    `json:"isin,omitempty"`
+	Side           string    `json:"side"`
+	Price          int64     `json:"price"`
+	Quantity       int64     `json:"quantity"`
+	ExecuteAt      time.Time `json:"execute_at"`
+	ExecutionMode  string    `json:"execution_mode,omitempty"`
+	Status         string    `json:"status"`
+	BrokerOrderID  string    `json:"broker_order_id,omitempty"`
+	BrokerMessage  string    `json:"broker_message,omitempty"`
+	AttemptedAt    time.Time `json:"attempted_at,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type Store struct {
@@ -291,14 +299,325 @@ func validateOrder(r *http.Request, now time.Time) (Order, error) {
 	if executionMode == "" {
 		executionMode = executionModeManual
 	}
-	if executionMode == executionModeAPI {
-		return Order{}, errors.New("مسیر با API هنوز فعال نشده است؛ فعلاً مسیر بدون API را انتخاب کنید")
+	if executionMode == executionModeAPI && !rabinOrderAPICapable() {
+		return Order{}, errors.New("ارسال واقعی سفارش هنوز در تنظیمات سرور فعال و پیکربندی نشده است")
 	}
 	if executionMode != executionModeManual {
 		return Order{}, errors.New("مسیر اجرای سفارش معتبر نیست")
 	}
 	price, priceErr := strconv.ParseInt(r.FormValue("price"), 10, 64)
 	quantity, quantityErr := strconv.ParseInt(r.FormValue("quantity"), 10, 64)
+	isin := strings.ToUpper(strings.TrimSpace(r.FormValue("isin")))
+	if executionMode == executionModeAPI && !regexp.MustCompile(`^[A-Z]{2}[A-Z0-9]{9}[0-9]package main
+
+import (
+	"context"
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"html/template"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	jalaali "rabin-assistant/internal/jalaali"
+)
+
+const (
+	statusScheduled     = "scheduled"
+	statusReady         = "ready"
+	statusCancelled     = "cancelled"
+	statusManualDone        = "manual_done"
+	statusSubmitting        = "submitting"
+	statusSubmitted         = "submitted"
+	statusSubmissionFailed  = "submission_failed"
+	statusSubmissionUnknown = "submission_unknown"
+	executionModeManual     = "manual"
+	executionModeAPI        = "api"
+)
+
+type Order struct {
+	ID             string    `json:"id"`
+	Symbol         string    `json:"symbol"`
+	ISIN           string    `json:"isin,omitempty"`
+	Side           string    `json:"side"`
+	Price          int64     `json:"price"`
+	Quantity       int64     `json:"quantity"`
+	ExecuteAt      time.Time `json:"execute_at"`
+	ExecutionMode  string    `json:"execution_mode,omitempty"`
+	Status         string    `json:"status"`
+	BrokerOrderID  string    `json:"broker_order_id,omitempty"`
+	BrokerMessage  string    `json:"broker_message,omitempty"`
+	AttemptedAt    time.Time `json:"attempted_at,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type Store struct {
+	mu     sync.Mutex
+	path   string
+	orders []Order
+}
+
+func newStore(path string) (*Store, error) {
+	s := &Store{path: path, orders: []Order{}}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return s, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &s.orders); err != nil {
+			return nil, fmt.Errorf("خواندن داده سفارش‌ها: %w", err)
+		}
+	}
+	return s, nil
+}
+
+func (s *Store) snapshot() []Order {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := append([]Order(nil), s.orders...)
+	sort.Slice(out, func(i, j int) bool { return out[i].ExecuteAt.Before(out[j].ExecuteAt) })
+	return out
+}
+
+func (s *Store) list(history bool) []Order {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Order, 0, len(s.orders))
+	for _, order := range s.orders {
+		if (order.Status != statusScheduled) == history {
+			out = append(out, order)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if history {
+			return out[i].ExecuteAt.After(out[j].ExecuteAt)
+		}
+		return out[i].ExecuteAt.Before(out[j].ExecuteAt)
+	})
+	return out
+}
+
+func (s *Store) activeSnapshot() []Order  { return s.list(false) }
+func (s *Store) historySnapshot() []Order { return s.list(true) }
+
+func (s *Store) add(order Order) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.orders = append(s.orders, order)
+	if err := s.saveLocked(); err != nil {
+		s.orders = s.orders[:len(s.orders)-1]
+		return err
+	}
+	return nil
+}
+
+func (s *Store) confirmManual(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.orders {
+		if s.orders[i].ID != id {
+			continue
+		}
+		mode := s.orders[i].ExecutionMode
+		if mode == "" {
+			mode = executionModeManual
+		}
+		if mode != executionModeManual || s.orders[i].Status != statusReady {
+			return errors.New("فقط سفارش آماده در مسیر بدون API قابل تأیید دستی است")
+		}
+		old := s.orders[i]
+		s.orders[i].Status = statusManualDone
+		s.orders[i].UpdatedAt = time.Now().In(tehran())
+		if err := s.saveLocked(); err != nil {
+			s.orders[i] = old
+			return err
+		}
+		return nil
+	}
+	return errors.New("سفارش پیدا نشد")
+}
+
+func (s *Store) cancel(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.orders {
+		if s.orders[i].ID != id {
+			continue
+		}
+		if s.orders[i].Status != statusScheduled {
+			return errors.New("فقط سفارش زمان‌بندی‌شده قابل لغو است")
+		}
+		old := s.orders[i]
+		s.orders[i].Status = statusCancelled
+		s.orders[i].UpdatedAt = time.Now().In(tehran())
+		if err := s.saveLocked(); err != nil {
+			s.orders[i] = old
+			return err
+		}
+		return nil
+	}
+	return errors.New("سفارش پیدا نشد")
+}
+
+func (s *Store) markDue(now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := false
+	for i := range s.orders {
+		if s.orders[i].Status == statusScheduled && !s.orders[i].ExecuteAt.After(now) {
+			s.orders[i].Status = statusReady
+			s.orders[i].UpdatedAt = now
+			changed = true
+		}
+	}
+	if changed {
+		return s.saveLocked()
+	}
+	return nil
+}
+
+func (s *Store) saveLocked() error {
+	data, err := json.MarshalIndent(s.orders, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
+		return err
+	}
+	tmp := s.path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.path)
+}
+
+var tehranLocation = func() *time.Location {
+	loc, err := time.LoadLocation("Asia/Tehran")
+	if err != nil {
+		return time.FixedZone("IRST", 3*3600+30*60)
+	}
+	return loc
+}()
+
+func tehran() *time.Location { return tehranLocation }
+
+var persianDigitReplacer = strings.NewReplacer(
+	"۰", "0", "۱", "1", "۲", "2", "۳", "3", "۴", "4",
+	"۵", "5", "۶", "6", "۷", "7", "۸", "8", "۹", "9",
+	"٠", "0", "١", "1", "٢", "2", "٣", "3", "٤", "4",
+	"٥", "5", "٦", "6", "٧", "7", "٨", "8", "٩", "9",
+)
+
+func parseJalaliDateTime(raw string) (time.Time, error) {
+	raw = strings.TrimSpace(persianDigitReplacer.Replace(raw))
+	fields := strings.Fields(raw)
+	if len(fields) != 2 {
+		return time.Time{}, errors.New("فرمت تاریخ و ساعت باید مانند 1405/08/14 08:44:50 باشد")
+	}
+
+	dateParts := strings.FieldsFunc(fields[0], func(r rune) bool { return r == '/' || r == '-' || r == '.' })
+	if len(dateParts) != 3 {
+		return time.Time{}, errors.New("فرمت تاریخ شمسی نامعتبر است")
+	}
+	year, errY := strconv.Atoi(dateParts[0])
+	month, errM := strconv.Atoi(dateParts[1])
+	day, errD := strconv.Atoi(dateParts[2])
+	if errY != nil || errM != nil || errD != nil || !jalaali.IsValidDate(year, month, day) {
+		return time.Time{}, errors.New("تاریخ شمسی معتبر نیست")
+	}
+
+	timeParts := strings.Split(fields[1], ":")
+	if len(timeParts) != 3 {
+		return time.Time{}, errors.New("ساعت باید به شکل ساعت:دقیقه:ثانیه و میلی‌ثانیه اختیاری باشد")
+	}
+	secondParts := strings.Split(timeParts[2], ".")
+	if len(secondParts) > 2 {
+		return time.Time{}, errors.New("فرمت میلی‌ثانیه نامعتبر است")
+	}
+	hour, errH := strconv.Atoi(timeParts[0])
+	minute, errMin := strconv.Atoi(timeParts[1])
+	second, errSec := strconv.Atoi(secondParts[0])
+	millisecond := 0
+	if len(secondParts) == 2 {
+		fraction := secondParts[1]
+		if len(fraction) < 1 || len(fraction) > 3 {
+			return time.Time{}, errors.New("میلی‌ثانیه باید یک تا سه رقم باشد")
+		}
+		for len(fraction) < 3 {
+			fraction += "0"
+		}
+		millisecond, errSec = strconv.Atoi(fraction)
+	}
+	if errH != nil || errMin != nil || errSec != nil ||
+		hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 ||
+		millisecond < 0 || millisecond > 999 {
+		return time.Time{}, errors.New("ساعت واردشده معتبر نیست")
+	}
+
+	gy, gm, gd, err := jalaali.ToGregorian(year, jalaali.Month(month), day)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("تبدیل تاریخ شمسی: %w", err)
+	}
+	return time.Date(gy, gm, gd, hour, minute, second, millisecond*int(time.Millisecond), tehran()), nil
+}
+
+func formatJalaliDateTime(t time.Time) string {
+	local := t.In(tehran())
+	formatted, err := jalaali.From(local).JFormat("2006/01/02 15:04:05")
+	if err != nil {
+		formatted = local.Format("2006/01/02 15:04:05")
+	}
+	millis := fmt.Sprintf("%03d", local.Nanosecond()/int(time.Millisecond))
+	persianMillis := strings.NewReplacer("0", "۰", "1", "۱", "2", "۲", "3", "۳", "4", "۴", "5", "۵", "6", "۶", "7", "۷", "8", "۸", "9", "۹").Replace(millis)
+	return formatted + "٫" + persianMillis
+}
+
+func executionModeLabel(mode string) string {
+	if mode == executionModeAPI {
+		return "با API"
+	}
+	return "بدون API"
+}
+
+func isManualExecution(mode string) bool {
+	return mode == "" || mode == executionModeManual
+}
+
+var symbolPattern = regexp.MustCompile(`^[\p{L}\p{N}._-]{1,24}$`)
+
+func validateOrder(r *http.Request, now time.Time) (Order, error) {
+	if err := r.ParseForm(); err != nil {
+		return Order{}, errors.New("فرم معتبر نیست")
+	}
+	symbol := strings.TrimSpace(r.FormValue("symbol"))
+	side := r.FormValue("side")
+	executionMode := strings.TrimSpace(r.FormValue("execution_mode"))
+	if executionMode == "" {
+		executionMode = executionModeManual
+	}
+	if executionMode == executionModeAPI && !rabinOrderAPICapable() {
+		return Order{}, errors.New("ارسال واقعی سفارش هنوز در تنظیمات سرور فعال و پیکربندی نشده است")
+	}
+	if executionMode != executionModeManual {
+		return Order{}, errors.New("مسیر اجرای سفارش معتبر نیست")
+	}
+).MatchString(isin) {
+		return Order{}, errors.New("برای سفارش با API، شناسه ۱۲ کاراکتری ISIN معتبر وارد کنید")
+	}
 	if !symbolPattern.MatchString(symbol) {
 		return Order{}, errors.New("نماد نامعتبر است")
 	}
@@ -324,16 +643,17 @@ func validateOrder(r *http.Request, now time.Time) (Order, error) {
 		return Order{}, errors.New("تاریخ شمسی یا ساعت معتبر نیست، یا زمان باید در آینده باشد؛ نمونه: ۱۴۰۵/۰۸/۱۴ ۰۸:۴۴:۵۰")
 	}
 	return Order{
-		ID:        fmt.Sprintf("%d", now.UnixNano()),
-		Symbol:    symbol,
-		Side:      side,
-		Price:     price,
-		Quantity:  quantity,
+		ID:            fmt.Sprintf("%d", now.UnixNano()),
+		Symbol:        symbol,
+		ISIN:          isin,
+		Side:          side,
+		Price:         price,
+		Quantity:      quantity,
 		ExecuteAt:     executeAt,
 		ExecutionMode: executionMode,
 		Status:        statusScheduled,
-		CreatedAt: now,
-		UpdatedAt: now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}, nil
 }
 
@@ -345,6 +665,7 @@ type PageData struct {
 	JMonth        int
 	JDay          int
 	History       bool
+	APIAvailable  bool
 }
 
 func currentJalaliParts(t time.Time) (int, int, int) {
@@ -411,12 +732,13 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 .datebox{position:relative}.datebar{display:flex;gap:8px}.datebar input{flex:1}.datebar button{white-space:nowrap}.calendar{margin-top:8px;padding:12px;border:1px solid #d0d5dd;border-radius:10px;background:#fff}.cal-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}.cal-nav{background:#f2f4f7;color:#344054;padding:7px 10px}.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;text-align:center}.cal-grid span{padding:7px 0;color:#667085;font-size:12px}.cal-day{background:#f8fafc;color:#182230;padding:9px 2px;border-radius:7px}.cal-day:hover,.cal-day.selected{background:#175cd3;color:#fff}.cal-day.today{outline:2px solid #84adff}.cal-empty{min-height:34px}
 @media(max-width:800px){.grid{grid-template-columns:1fr}.head{align-items:flex-start;gap:10px;flex-direction:column}}
 </style></head><body data-jyear="{{.JYear}}" data-jmonth="{{.JMonth}}" data-jday="{{.JDay}}"><main class="wrap">
-<div class="head"><div><h1>دستیار رابین</h1><div class="muted" style="margin-top:7px">مدیریت سفارش‌ها · ساعت تهران</div></div><div class="nav"><a class="{{if not .History}}active{{end}}" href="/">سفارش‌های فعال</a><a class="{{if .History}}active{{end}}" href="/history">تاریخچه</a><a href="/settings">اتصال به رابین</a></div><span class="tag">نسخه اول · بدون اتصال به کارگزاری</span></div>
-<div class="note"><b>دو مسیر مستقل:</b> مسیر «بدون API» فعلاً فعال است؛ پس از رسیدن موعد، سفارش برای ثبت دستی در رابین آماده می‌شود. بعد از ثبت توسط خودت، می‌توانی آن را تأیید کنی. مسیر «با API» جدا نگه داشته شده اما تا زمان داشتن API و پیاده‌سازی اتصال، غیرفعال است. این پنل به‌تنهایی سفارش واقعی ارسال نمی‌کند.</div>
+<div class="head"><div><h1>دستیار رابین</h1><div class="muted" style="margin-top:7px">مدیریت سفارش‌ها · ساعت تهران</div></div><div class="nav"><a class="{{if not .History}}active{{end}}" href="/">سفارش‌های فعال</a><a class="{{if .History}}active{{end}}" href="/history">تاریخچه</a><a href="/settings">اتصال به رابین</a></div><span class="tag">{{if .APIAvailable}}ارسال واقعی API فعال است{{else}}ارسال واقعی API غیرفعال است{{end}}</span></div>
+<div class="note"><b>دو مسیر اجرا:</b> مسیر «بدون API» سفارش را برای ثبت دستی آماده می‌کند. مسیر «با API» فقط در صورت فعال‌سازی صریح در تنظیمات سرور، وجود نشست معتبر و ثبت ISIN، در زمان مقرر یک درخواست سفارش عادی به رابین ارسال می‌کند. در صورت نامشخص بودن نتیجه ارسال، سیستم سفارش را خودکار تکرار نمی‌کند.</div>
 {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="msg">{{.Notice}}</div>{{end}}
 <div class="grid{{if .History}} history{{end}}">{{if not .History}}<section class="card"><h2>تعریف سفارش</h2>
-<form method="post" action="/orders"><label>مسیر ثبت سفارش</label><select name="execution_mode"><option value="manual" selected>بدون API — ثبت دستی در رابین (فعال)</option><option value="api" disabled>با API — فعلاً غیرفعال</option></select>
-<label>نماد</label><input name="symbol" maxlength="24" placeholder="مثلاً خودرو" required>
+<form method="post" action="/orders"><label>مسیر ثبت سفارش</label><select id="execution-mode" name="execution_mode"><option value="manual" selected>بدون API — ثبت دستی در رابین</option><option value="api" {{if not .APIAvailable}}disabled{{end}}>با API — ارسال عادی به رابین</option></select>
+<label>نماد نمایشی</label><input name="symbol" maxlength="24" placeholder="مثلاً خودرو" required>
+<label>شناسه ISIN (فقط برای مسیر API)</label><input id="order-isin" name="isin" maxlength="12" minlength="12" pattern="[A-Za-z]{2}[A-Za-z0-9]{9}[0-9]" placeholder="مثلاً IR..." autocomplete="off">
 <label>نوع سفارش</label><select name="side"><option value="buy">خرید</option><option value="sell">فروش</option></select>
 <label>قیمت (ریال)</label><input name="price" type="number" min="1" step="1" required>
 <label>تعداد</label><input name="quantity" type="number" min="1" step="1" required>
@@ -431,12 +753,12 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 </div>
 <label>ساعت اجرا (تهران، با دقت میلی‌ثانیه)</label><input id="execute-time" name="execute_time" type="time" step="0.001" value="08:44:50.000" required>
 <button class="submit" type="submit">ذخیره سفارش</button></form>
-<div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود.</div></section>{{end}}
+<div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود. در مسیر API، ISIN دقیق نماد الزامی است.</div></section>{{end}}
 <section class="card"><h2>{{if .History}}تاریخچه سفارش‌ها{{else}}سفارش‌های فعال{{end}} ({{len .Orders}})</h2><div class="tablewrap"><table>
 <thead><tr><th>نماد</th><th>نوع</th><th>قیمت</th><th>تعداد</th><th>زمان تهران</th><th>مسیر</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>
 {{range .Orders}}<tr><td><b>{{.Symbol}}</b></td><td>{{if eq .Side "buy"}}<span class="buy">خرید</span>{{else}}<span class="sell">فروش</span>{{end}}</td>
 <td>{{.Price}}</td><td>{{.Quantity}}</td><td>{{jalali .ExecuteAt}}</td><td>{{executionMode .ExecutionMode}}</td>
-<td>{{if eq .Status "scheduled"}}<span class="status scheduled">زمان‌بندی‌شده</span>{{else if eq .Status "ready"}}<span class="status ready">آماده بررسی</span>{{else if eq .Status "manual_done"}}<span class="status ready">ثبت دستی تأیید شد</span>{{else}}<span class="status cancelled">لغوشده</span>{{end}}</td>
+<td>{{if eq .Status "scheduled"}}<span class="status scheduled">زمان‌بندی‌شده</span>{{else if eq .Status "ready"}}<span class="status ready">{{if eq .ExecutionMode "api"}}آماده ارسال{{else}}آماده بررسی{{end}}</span>{{else if eq .Status "manual_done"}}<span class="status ready">ثبت دستی تأیید شد</span>{{else if eq .Status "submitting"}}<span class="status ready">در حال ارسال</span>{{else if eq .Status "submitted"}}<span class="status ready">ثبت در رابین</span>{{else if eq .Status "submission_failed"}}<span class="status cancelled">ارسال ناموفق</span>{{else if eq .Status "submission_unknown"}}<span class="status cancelled">نتیجه نامشخص — بررسی لازم</span>{{else}}<span class="status cancelled">لغوشده</span>{{end}}{{if .BrokerOrderID}}<div class="foot">شناسه رابین: {{.BrokerOrderID}}</div>{{end}}{{if .BrokerMessage}}<div class="foot">{{.BrokerMessage}}</div>{{end}}</td>
 <td>{{if eq .Status "scheduled"}}<form method="post" action="/orders/cancel"><input type="hidden" name="id" value="{{.ID}}"><button class="cancel">لغو</button></form>{{else if and $.History (eq .Status "ready") (manualMode .ExecutionMode)}}<form method="post" action="/orders/manual-confirm" onsubmit="return confirm('آیا سفارش را شخصاً در سامانه رابین ثبت کرده‌ای؟')"><input type="hidden" name="id" value="{{.ID}}"><button class="submit">ثبت دستی انجام شد</button></form>{{else}}—{{end}}</td></tr>
 {{else}}<tr><td colspan="8" class="empty">{{if .History}}هنوز موردی در تاریخچه ثبت نشده است.{{else}}سفارش فعالی ثبت نشده است.{{end}}</td></tr>{{end}}
 </tbody></table></div><div class="foot">{{if .History}}این صفحه سفارش‌های سررسیدشده و لغوشده را نگه می‌دارد؛ هیچ سفارشی از داده‌ها حذف نشده است.{{else}}ساعت سرور: {{.Now}} · سفارش‌های سررسیدشده در صفحه تاریخچه نمایش داده می‌شوند.{{end}} وضعیت «آماده بررسی» به معنی ارسال به کارگزاری نیست.</div>
@@ -459,6 +781,19 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
   const pad = (value) => String(value).padStart(2, "0");
   const display = $("jalali-date-display");
   const calendar = $("jalali-calendar");
+  const executionMode = $("execution-mode");
+  const isinInput = $("order-isin");
+  function syncExecutionMode() {
+    const apiMode = executionMode && executionMode.value === "api";
+    if (isinInput) {
+      isinInput.required = !!apiMode;
+      isinInput.disabled = !apiMode;
+    }
+  }
+  if (executionMode) {
+    executionMode.addEventListener("change", syncExecutionMode);
+    syncExecutionMode();
+  }
 
   function parseTypedDate() {
     const raw = latin(display.value.trim());
@@ -559,12 +894,19 @@ func main() {
 	}
 
 	credentials := NewRabinCredentialStore(dataDir, env("RABIN_CREDENTIALS_KEY_FILE", "/etc/rabin-assistant.key"))
+	if err := store.recoverInterruptedAPIOrders(time.Now().In(tehran())); err != nil {
+		log.Printf("recover interrupted API orders: %v", err)
+	}
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 		for now := range ticker.C {
-			if err := store.markDue(now.In(tehran())); err != nil {
+			now = now.In(tehran())
+			if err := store.markDue(now); err != nil {
 				log.Printf("scheduler: %v", err)
+			}
+			if rabinOrderAPICapable() {
+				dispatchReadyRabinOrders(store, credentials, now)
 			}
 		}
 	}()
@@ -596,7 +938,7 @@ func main() {
 		if history {
 			orders = store.historySnapshot()
 		}
-		data := PageData{Orders: orders, Now: formatJalaliDateTime(now), JYear: year, JMonth: month, JDay: day, History: history}
+		data := PageData{Orders: orders, Now: formatJalaliDateTime(now), JYear: year, JMonth: month, JDay: day, History: history, APIAvailable: rabinOrderAPICapable()}
 		switch r.URL.Query().Get("notice") {
 		case "saved":
 			data.Notice = "سفارش ذخیره شد."
@@ -749,6 +1091,7 @@ func renderError(w http.ResponseWriter, store *Store, message string) {
 		JYear: func() int { y, _, _ := currentJalaliParts(time.Now().In(tehran())); return y }(),
 		JMonth: func() int { _, m, _ := currentJalaliParts(time.Now().In(tehran())); return m }(),
 		JDay: func() int { _, _, d := currentJalaliParts(time.Now().In(tehran())); return d }(),
+		APIAvailable: rabinOrderAPICapable(),
 	})
 }
 
