@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Read-only connectivity and DOM probe for trader.rabin.ir.
+"""Read-only Rabin login-page probe.
 
-This probe never signs in, types into fields, or clicks buttons.
-It only reads the public/login page and writes a diagnostic screenshot.
+Opens the public trading page, then opens the login UI only.
+It never types credentials, submits a login form, or places an order.
 """
 import json
 import os
-import sys
 from pathlib import Path
 
 TARGET = "https://trader.rabin.ir/"
@@ -17,6 +16,59 @@ SCREENSHOT = Path(os.environ.get(
 
 def emit(data):
     print(json.dumps(data, ensure_ascii=False, indent=2), flush=True)
+
+def collect_page(page):
+    return page.evaluate("""() => {
+      const visible = (el) => {
+        const r = el.getBoundingClientRect();
+        const s = getComputedStyle(el);
+        return r.width > 0 && r.height > 0 &&
+          s.visibility !== 'hidden' && s.display !== 'none';
+      };
+      const controls = [...document.querySelectorAll(
+        'input,textarea,select,button,[role="button"]'
+      )].filter(visible).slice(0, 120).map(el => {
+        const label = el.id
+          ? document.querySelector('label[for="' + CSS.escape(el.id) + '"]')
+          : null;
+        return {
+          tag: el.tagName.toLowerCase(),
+          type: el.getAttribute('type') || '',
+          name: el.getAttribute('name') || '',
+          id: el.id || '',
+          placeholder: el.getAttribute('placeholder') || '',
+          ariaLabel: el.getAttribute('aria-label') || '',
+          label: label ? (label.innerText || '').trim() : '',
+          text: (el.innerText || '').trim().slice(0, 120),
+          disabled: !!el.disabled
+        };
+      });
+      const forms = [...document.forms].filter(visible).map(form => ({
+        method: (form.method || 'get').toUpperCase(),
+        action: form.action || '',
+        fields: [...form.querySelectorAll('input,textarea,select')].filter(visible)
+          .map(el => ({
+            tag: el.tagName.toLowerCase(),
+            type: el.getAttribute('type') || '',
+            name: el.getAttribute('name') || '',
+            id: el.id || '',
+            placeholder: el.getAttribute('placeholder') || '',
+            ariaLabel: el.getAttribute('aria-label') || ''
+          }))
+      }));
+      const dialogs = [...document.querySelectorAll(
+        '[role="dialog"],dialog,[aria-modal="true"]'
+      )].filter(visible).map(el => (el.innerText || '').trim().slice(0, 1200));
+      return {
+        title: document.title,
+        url: location.href,
+        readyState: document.readyState,
+        bodyText: (document.body?.innerText || '').slice(0, 3600),
+        controls,
+        forms,
+        dialogs
+      };
+    }""")
 
 def main():
     try:
@@ -29,7 +81,7 @@ def main():
         "ok": False,
         "target": TARGET,
         "stage": "starting",
-        "note": "Read-only check: no login and no order submission.",
+        "note": "Read-only login UI probe: opens login UI only; no credentials typed, no login submitted, no order placed.",
     }
     with sync_playwright() as p:
         browser = None
@@ -43,46 +95,33 @@ def main():
             page = context.new_page()
             response = page.goto(TARGET, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(7000)
+            initial = collect_page(page)
 
-            details = page.evaluate("""() => {
-              const visible = (el) => {
-                const r = el.getBoundingClientRect();
-                const s = getComputedStyle(el);
-                return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
-              };
-              const controls = [...document.querySelectorAll(
-                'input,textarea,select,button,[role="button"]'
-              )].filter(visible).slice(0, 100).map(el => {
-                const label = el.id
-                  ? document.querySelector('label[for="' + CSS.escape(el.id) + '"]')
-                  : null;
-                return {
-                  tag: el.tagName.toLowerCase(),
-                  type: el.getAttribute('type') || '',
-                  name: el.getAttribute('name') || '',
-                  id: el.id || '',
-                  placeholder: el.getAttribute('placeholder') || '',
-                  ariaLabel: el.getAttribute('aria-label') || '',
-                  label: label ? (label.innerText || '').trim() : '',
-                  text: (el.innerText || el.value || '').trim().slice(0, 120),
-                  disabled: !!el.disabled
-                };
-              });
-              return {
-                title: document.title,
-                url: location.href,
-                readyState: document.readyState,
-                bodyText: (document.body?.innerText || '').slice(0, 3000),
-                controls
-              };
-            }""")
+            login_button = page.get_by_role(
+                "button", name="ورود به حساب کاربری", exact=True
+            ).first
+            if login_button.count() == 0:
+                login_button = page.get_by_role("button", name="ورود", exact=True).first
 
+            clicked = False
+            if login_button.count() > 0:
+                try:
+                    login_button.click(timeout=5000)
+                    page.wait_for_timeout(4000)
+                    clicked = True
+                except Exception as exc:
+                    result["open_login_error"] = str(exc)
+
+            login_ui = collect_page(page)
             result.update({
                 "ok": True,
-                "stage": "page_loaded",
+                "stage": "login_ui_inspected" if clicked else "login_button_not_found",
                 "http_status": response.status if response else None,
-                **details,
+                "initial_page": initial,
+                "login_button_clicked": clicked,
+                "login_page": login_ui,
             })
+
             try:
                 SCREENSHOT.parent.mkdir(parents=True, exist_ok=True)
                 page.screenshot(path=str(SCREENSHOT), full_page=True)
