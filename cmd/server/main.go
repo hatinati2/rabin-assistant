@@ -410,7 +410,7 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 .datebox{position:relative}.datebar{display:flex;gap:8px}.datebar input{flex:1}.datebar button{white-space:nowrap}.calendar{margin-top:8px;padding:12px;border:1px solid #d0d5dd;border-radius:10px;background:#fff}.cal-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}.cal-nav{background:#f2f4f7;color:#344054;padding:7px 10px}.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;text-align:center}.cal-grid span{padding:7px 0;color:#667085;font-size:12px}.cal-day{background:#f8fafc;color:#182230;padding:9px 2px;border-radius:7px}.cal-day:hover,.cal-day.selected{background:#175cd3;color:#fff}.cal-day.today{outline:2px solid #84adff}.cal-empty{min-height:34px}
 @media(max-width:800px){.grid{grid-template-columns:1fr}.head{align-items:flex-start;gap:10px;flex-direction:column}}
 </style></head><body data-jyear="{{.JYear}}" data-jmonth="{{.JMonth}}" data-jday="{{.JDay}}"><main class="wrap">
-<div class="head"><div><h1>دستیار رابین</h1><div class="muted" style="margin-top:7px">مدیریت سفارش‌ها · ساعت تهران</div></div><div class="nav"><a class="{{if not .History}}active{{end}}" href="/">سفارش‌های فعال</a><a class="{{if .History}}active{{end}}" href="/history">تاریخچه</a></div><span class="tag">نسخه اول · بدون اتصال به کارگزاری</span></div>
+<div class="head"><div><h1>دستیار رابین</h1><div class="muted" style="margin-top:7px">مدیریت سفارش‌ها · ساعت تهران</div></div><div class="nav"><a class="{{if not .History}}active{{end}}" href="/">سفارش‌های فعال</a><a class="{{if .History}}active{{end}}" href="/history">تاریخچه</a><a href="/settings">اتصال به رابین</a></div><span class="tag">نسخه اول · بدون اتصال به کارگزاری</span></div>
 <div class="note"><b>دو مسیر مستقل:</b> مسیر «بدون API» فعلاً فعال است؛ پس از رسیدن موعد، سفارش برای ثبت دستی در رابین آماده می‌شود. بعد از ثبت توسط خودت، می‌توانی آن را تأیید کنی. مسیر «با API» جدا نگه داشته شده اما تا زمان داشتن API و پیاده‌سازی اتصال، غیرفعال است. این پنل به‌تنهایی سفارش واقعی ارسال نمی‌کند.</div>
 {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="msg">{{.Notice}}</div>{{end}}
 <div class="grid{{if .History}} history{{end}}">{{if not .History}}<section class="card"><h2>تعریف سفارش</h2>
@@ -556,6 +556,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	credentials := NewRabinCredentialStore(dataDir, env("RABIN_CREDENTIALS_KEY_FILE", "/etc/rabin-assistant.key"))
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
@@ -609,6 +611,43 @@ func main() {
 	}
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		renderOrdersPage(w, r, false)
+	})
+
+	mux.HandleFunc("GET /settings", func(w http.ResponseWriter, r *http.Request) {
+		notice := ""
+		if r.URL.Query().Get("notice") == "rabin_saved" {
+			notice = "اطلاعات ورود رابین به‌صورت رمزنگاری‌شده ذخیره شد."
+		} else if r.URL.Query().Get("notice") == "rabin_deleted" {
+			notice = "اطلاعات ورود رابین حذف شد."
+		}
+		credentials.Render(w, "", notice)
+	})
+	mux.HandleFunc("POST /settings/rabin-credentials", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "درخواست نامعتبر", http.StatusForbidden)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+		if err := r.ParseForm(); err != nil {
+			credentials.Render(w, "فرم معتبر نیست یا حجم آن بیش از حد مجاز است.", "")
+			return
+		}
+		if err := credentials.Save(r.FormValue("username"), r.FormValue("password")); err != nil {
+			credentials.Render(w, err.Error(), "")
+			return
+		}
+		http.Redirect(w, r, "/settings?notice=rabin_saved", http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /settings/rabin-credentials/delete", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "درخواست نامعتبر", http.StatusForbidden)
+			return
+		}
+		if err := credentials.Delete(); err != nil {
+			credentials.Render(w, "حذف اطلاعات ورود انجام نشد.", "")
+			return
+		}
+		http.Redirect(w, r, "/settings?notice=rabin_deleted", http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /history", func(w http.ResponseWriter, r *http.Request) {
 		renderOrdersPage(w, r, true)
