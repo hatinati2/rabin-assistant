@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only Rabin login-page probe.
+"""Read-only Rabin login UI probe.
 
 Opens the public trading page, then opens the login UI only.
 It never types credentials, submits a login form, or places an order.
@@ -97,28 +97,34 @@ def main():
             page.wait_for_timeout(7000)
             initial = collect_page(page)
 
-            login_button = page.get_by_role(
-                "button", name="ورود به حساب کاربری", exact=True
-            ).first
-            if login_button.count() == 0:
-                login_button = page.get_by_role("button", name="ورود", exact=True).first
-
-            clicked = False
-            if login_button.count() > 0:
-                try:
-                    login_button.click(timeout=5000)
-                    page.wait_for_timeout(4000)
-                    clicked = True
-                except Exception as exc:
-                    result["open_login_error"] = str(exc)
+            # Find the visible login button by its rendered text. The site's
+            # layout can place this button outside the viewport in headless mode,
+            # so scroll it into view and dispatch a normal DOM click.
+            click_info = page.evaluate("""() => {
+              const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
+              const candidates = [...document.querySelectorAll('button,[role="button"]')];
+              const el = candidates.find(x =>
+                norm(x.innerText) === 'ورود به حساب کاربری'
+              ) || candidates.find(x => norm(x.innerText) === 'ورود');
+              if (!el) return {found: false};
+              const before = (() => {
+                const r = el.getBoundingClientRect();
+                return {x: r.x, y: r.y, width: r.width, height: r.height};
+              })();
+              el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+              el.click();
+              return {found: true, text: norm(el.innerText), rectBefore: before};
+            }""")
+            if click_info.get("found"):
+                page.wait_for_timeout(3500)
 
             login_ui = collect_page(page)
             result.update({
                 "ok": True,
-                "stage": "login_ui_inspected" if clicked else "login_button_not_found",
+                "stage": "login_ui_inspected" if click_info.get("found") else "login_button_not_found",
                 "http_status": response.status if response else None,
                 "initial_page": initial,
-                "login_button_clicked": clicked,
+                "login_click": click_info,
                 "login_page": login_ui,
             })
 
