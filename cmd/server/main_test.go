@@ -94,3 +94,38 @@ func TestValidateOrderAcceptsManualJalaliDateAndTimeFields(t *testing.T) {
 		t.Fatalf("execute time = %s, want %s", order.ExecuteAt, want)
 	}
 }
+
+func TestSameOriginAcceptsSameHostFormRequests(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+		value  string
+	}{
+		{name: "Origin", header: "Origin", value: "http://213.176.7.211:8098"},
+		{name: "Referer fallback", header: "Referer", value: "http://213.176.7.211:8098/"},
+		{name: "Fetch Metadata fallback", header: "Sec-Fetch-Site", value: "same-origin"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "http://213.176.7.211:8098/orders", nil)
+			req.Header.Set(tc.header, tc.value)
+			if !sameOrigin(req) {
+				t.Fatalf("sameOrigin rejected same-host request with %s", tc.header)
+			}
+		})
+	}
+}
+
+func TestSameOriginRejectsCrossSiteRequests(t *testing.T) {
+	req := httptest.NewRequest("POST", "http://213.176.7.211:8098/orders", nil)
+	req.Header.Set("Origin", "http://example.com")
+	if sameOrigin(req) {
+		t.Fatal("sameOrigin accepted a cross-site Origin")
+	}
+
+	req = httptest.NewRequest("POST", "http://213.176.7.211:8098/orders", nil)
+	req.Header.Set("Referer", "http://example.com/form")
+	if sameOrigin(req) {
+		t.Fatal("sameOrigin accepted a cross-site Referer")
+	}
+}
