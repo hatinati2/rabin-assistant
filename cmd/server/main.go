@@ -559,7 +559,7 @@ func sameOrigin(r *http.Request) bool {
 	// Prefer the Origin header for POST requests. Some browsers or proxies omit
 	// it for ordinary form submissions, so fall back to Referer and then
 	// Fetch Metadata when available.
-	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" {
+	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" && !strings.EqualFold(origin, "null") {
 		return sameHostURL(origin, r.Host)
 	}
 	if referer := strings.TrimSpace(r.Referer()); referer != "" {
