@@ -46,7 +46,7 @@ def main():
             urls = page.evaluate("""() => [...new Set([
               ...[...document.scripts].map(s => s.src).filter(Boolean),
               ...performance.getEntriesByType('resource')
-                .filter(e => /\\.m?js(?:[?#]|$)/i.test(e.name))
+                .filter(e => /\.m?js(?:[?#]|$)/i.test(e.name))
                 .map(e => e.name)
             ])].map(raw => {
               try { const u = new URL(raw, location.href); return u.origin === location.origin ? u.origin + u.pathname : ''; }
@@ -71,7 +71,7 @@ def main():
                         found_positions.add(pos)
                         left = max(0, pos - before)
                         right = min(len(source), pos + after)
-                        snippet = re.sub(r"\\s+", " ", source[left:right])
+                        snippet = re.sub(r"\s+", " ", source[left:right])
                         result["contexts"].append({
                             "bundle": bundle,
                             "label": label,
@@ -80,10 +80,10 @@ def main():
                         })
 
                     for pattern, label in (
-                        (r"preOrder\\s*:\\s*\\{[^{}]{0,1800}sendGroupPreOrder", "preorder_route_table"),
-                        (r"\\b[A-Za-z_$][\\w$]*\\.Hv\\.preOrder\\.preOrder", "preorder_create_route_use"),
-                        (r"\\b[A-Za-z_$][\\w$]*\\.Hv\\.preOrder\\.sendGroupPreOrder", "preorder_send_route_use"),
-                        (r"\\b[A-Za-z_$][\\w$]*\\.Hv\\.preOrder\\.sendAllPreOrder", "preorder_send_all_route_use"),
+                        (r"preOrder\s*:\s*\{[^{}]{0,1800}sendGroupPreOrder", "preorder_route_table"),
+                        (r"\b[A-Za-z_$][\w$]*\.Hv\.preOrder\.preOrder", "preorder_create_route_use"),
+                        (r"\b[A-Za-z_$][\w$]*\.Hv\.preOrder\.sendGroupPreOrder", "preorder_send_route_use"),
+                        (r"\b[A-Za-z_$][\w$]*\.Hv\.preOrder\.sendAllPreOrder", "preorder_send_all_route_use"),
                     ):
                         for m in re.finditer(pattern, source):
                             add_context(label, m.start(), before=2600, after=4300)
@@ -91,12 +91,12 @@ def main():
                                 break
 
                     # The order-entry dialog receives its callback via a preOrder prop.
-                    for m in re.finditer(r"\\bpreOrder\\s*:\\s*([A-Za-z_$][\\w$]*)", source):
+                    for m in re.finditer(r"\bpreOrder\s*:\s*([A-Za-z_$][\w$]*)", source):
                         name = m.group(1)
                         if name in result["linked_callback_names"]:
                             continue
                         result["linked_callback_names"].append(name)
-                        assignment = re.compile(r"\\b" + re.escape(name) + r"\\s*=")
+                        assignment = re.compile(r"\b" + re.escape(name) + r"\s*=")
                         for a in assignment.finditer(source):
                             add_context("preOrder_prop_callback_" + name, a.start(), before=2600, after=4300)
                             if len(result["contexts"]) >= MAX_CONTEXTS:
