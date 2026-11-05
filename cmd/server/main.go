@@ -164,7 +164,12 @@ func validateOrder(r *http.Request, now time.Time) (Order, error) {
 	if quantityErr != nil || quantity <= 0 {
 		return Order{}, errors.New("تعداد باید عدد صحیح مثبت باشد")
 	}
-	executeAt, err := time.ParseInLocation("2006-01-02T15:04", r.FormValue("execute_at"), tehran())
+	rawExecuteAt := strings.TrimSpace(r.FormValue("execute_at"))
+	executeAt, err := time.ParseInLocation("2006-01-02T15:04:05", rawExecuteAt, tehran())
+	if err != nil {
+		// Backward compatibility with browsers/forms that omit seconds.
+		executeAt, err = time.ParseInLocation("2006-01-02T15:04", rawExecuteAt, tehran())
+	}
 	if err != nil || !executeAt.After(now) {
 		return Order{}, errors.New("تاریخ و ساعت باید معتبر و در آینده باشند")
 	}
@@ -217,13 +222,13 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 <label>نوع سفارش</label><select name="side"><option value="buy">خرید</option><option value="sell">فروش</option></select>
 <label>قیمت (ریال)</label><input name="price" type="number" min="1" step="1" required>
 <label>تعداد</label><input name="quantity" type="number" min="1" step="1" required>
-<label>تاریخ و ساعت اجرا (تهران)</label><input name="execute_at" type="datetime-local" required>
+<label>تاریخ و ساعت اجرا (تهران، با دقت ثانیه)</label><input name="execute_at" type="datetime-local" step="1" required>
 <button class="submit" type="submit">ذخیره سفارش</button></form>
 <div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود.</div></section>
 <section class="card"><h2>سفارش‌ها ({{len .Orders}})</h2><div class="tablewrap"><table>
 <thead><tr><th>نماد</th><th>نوع</th><th>قیمت</th><th>تعداد</th><th>زمان تهران</th><th>وضعیت</th><th></th></tr></thead><tbody>
 {{range .Orders}}<tr><td><b>{{.Symbol}}</b></td><td>{{if eq .Side "buy"}}<span class="buy">خرید</span>{{else}}<span class="sell">فروش</span>{{end}}</td>
-<td>{{.Price}}</td><td>{{.Quantity}}</td><td>{{.ExecuteAt.Format "2006-01-02 15:04"}}</td>
+<td>{{.Price}}</td><td>{{.Quantity}}</td><td>{{.ExecuteAt.Format "2006-01-02 15:04:05"}}</td>
 <td>{{if eq .Status "scheduled"}}<span class="status scheduled">زمان‌بندی‌شده</span>{{else if eq .Status "ready"}}<span class="status ready">آماده بررسی</span>{{else}}<span class="status cancelled">لغوشده</span>{{end}}</td>
 <td>{{if eq .Status "scheduled"}}<form method="post" action="/orders/cancel"><input type="hidden" name="id" value="{{.ID}}"><button class="cancel">لغو</button></form>{{else}}—{{end}}</td></tr>
 {{else}}<tr><td colspan="7" class="empty">هنوز سفارشی ثبت نشده است.</td></tr>{{end}}
@@ -248,7 +253,7 @@ func main() {
 		log.Fatal(err)
 	}
 	go func() {
-		ticker := time.NewTicker(time.Second)
+		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 		for now := range ticker.C {
 			if err := store.markDue(now.In(tehran())); err != nil {
