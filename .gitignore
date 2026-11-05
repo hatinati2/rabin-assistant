@@ -1,0 +1,33 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*credentials*.txt
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local data and logs
+/data/
+/logs/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+orders.json
+
+# Browser sessions and state
+*storage_state*
+/browser-profile/
+
+# Build outputs
+/bin/
+/dist/
+/server
+/rabin-assistant
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
