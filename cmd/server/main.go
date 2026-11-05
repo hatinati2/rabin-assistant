@@ -429,6 +429,7 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 .scheduled{background:#eff8ff;color:#175cd3}.ready{background:#fffaeb;color:#b54708}.cancelled{background:#f2f4f7;color:#475467}
 .buy{color:#067647;font-weight:bold}.sell{color:#b42318;font-weight:bold}.empty{text-align:center;color:#667085;padding:28px}
 .foot{font-size:12px;line-height:1.8;margin-top:12px}
+.server-clock{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 16px;padding:13px 16px;background:#fff;border:1px solid #d0d5dd;border-radius:12px}.server-clock-label{color:#667085;font-size:13px}.server-clock-value{font:700 25px Tahoma,Arial;direction:ltr;font-variant-numeric:tabular-nums;letter-spacing:1px;color:#175cd3}.server-clock-status{font-size:11px;color:#667085}@media(max-width:480px){.server-clock{align-items:flex-start;flex-direction:column}.server-clock-value{font-size:23px}}
 .symbol-suggestions{margin-top:5px;border:1px solid #d0d5dd;border-radius:9px;background:#fff;max-height:280px;overflow:auto;box-shadow:0 8px 20px rgba(16,24,40,.10)}
 .symbol-suggestions[hidden]{display:none}
 .symbol-suggestion{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:10px 12px;border:0;border-radius:0;border-bottom:1px solid #eaecf0;background:#fff;color:#182230;text-align:right;cursor:pointer}
@@ -438,6 +439,7 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 @media(max-width:800px){.grid{grid-template-columns:1fr}.head{align-items:flex-start;gap:10px;flex-direction:column}}
 </style></head><body data-jyear="{{.JYear}}" data-jmonth="{{.JMonth}}" data-jday="{{.JDay}}"><main class="wrap">
 <div class="head"><div><h1>دستیار رابین</h1><div class="muted" style="margin-top:7px">مدیریت سفارش‌ها · ساعت تهران</div></div><div class="nav"><a class="{{if not .History}}active{{end}}" href="/">سفارش‌های فعال</a><a class="{{if .History}}active{{end}}" href="/history">تاریخچه</a><a href="/settings">اتصال به رابین</a></div><span class="tag">{{if .APIAvailable}}ارسال واقعی API فعال است{{else}}ارسال واقعی API غیرفعال است{{end}}</span></div>
+<section class="server-clock" aria-live="off"><div><div class="server-clock-label">ساعت فعلی سرور (تهران)</div><div class="server-clock-status" id="server-clock-status">در حال دریافت زمان سرور…</div></div><time class="server-clock-value" id="server-clock" dir="ltr">--:--:--</time></section>
 <div class="note"><b>دو مسیر اجرا:</b> مسیر «بدون API» سفارش را برای ثبت دستی آماده می‌کند. مسیر «با API» فقط در صورت فعال‌سازی صریح در تنظیمات سرور، وجود نشست معتبر و ثبت ISIN، در زمان مقرر یک درخواست سفارش عادی به رابین ارسال می‌کند. در صورت نامشخص بودن نتیجه ارسال، سیستم سفارش را خودکار تکرار نمی‌کند.</div>
 {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="msg">{{.Notice}}</div>{{end}}
 <div class="grid{{if .History}} history{{end}}">{{if not .History}}<section class="card"><h2>تعریف سفارش</h2>
@@ -743,6 +745,43 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 
   display.addEventListener("input", syncCalendarToTypedDate);
 })();
+  // Server clock: anchor to the server's epoch time, then advance with the
+  // browser's monotonic clock so the device wall-clock is never used.
+  (() => {
+    const clock = document.getElementById("server-clock");
+    const status = document.getElementById("server-clock-status");
+    if (!clock || !status) return;
+    let serverBaseMs = 0;
+    let performanceBaseMs = 0;
+    const formatter = new Intl.DateTimeFormat("fa-IR-u-nu-latn", {
+      timeZone: "Asia/Tehran", hour: "2-digit", minute: "2-digit",
+      second: "2-digit", hourCycle: "h23"
+    });
+    function tick() {
+      if (!serverBaseMs) return;
+      const serverNow = serverBaseMs + (performance.now() - performanceBaseMs);
+      clock.textContent = formatter.format(new Date(serverNow));
+    }
+    async function sync() {
+      try {
+        const response = await fetch("/api/server-time", {
+          cache: "no-store", headers: {"Accept": "application/json"}
+        });
+        if (!response.ok) throw new Error("server time unavailable");
+        const data = await response.json();
+        if (!Number.isFinite(data.unix_millis)) throw new Error("invalid server time");
+        serverBaseMs = data.unix_millis;
+        performanceBaseMs = performance.now();
+        status.textContent = "مبنای زمان: ساعت سیستم Ubuntu · همگام‌سازی زنده";
+        tick();
+      } catch (_) {
+        status.textContent = "دریافت ساعت سرور ناموفق بود؛ در حال تلاش مجدد";
+      }
+    }
+    window.setInterval(tick, 200);
+    sync();
+    window.setInterval(sync, 30000);
+  })();
 </script></body></html>`))
 
 func main() {
@@ -784,6 +823,14 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/server-time", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		_ = json.NewEncoder(w).Encode(struct {
+			UnixMillis int64 `json:"unix_millis"`
+			Timezone   string `json:"timezone"`
+		}{UnixMillis: time.Now().In(tehran()).UnixMilli(), Timezone: "Asia/Tehran"})
+	})
 	mux.HandleFunc("GET /api/calendar", func(w http.ResponseWriter, r *http.Request) {
 		year, errY := strconv.Atoi(r.URL.Query().Get("year"))
 		month, errM := strconv.Atoi(r.URL.Query().Get("month"))
