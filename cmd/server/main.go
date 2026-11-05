@@ -468,7 +468,7 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 {{range .Orders}}<tr><td><b>{{.Symbol}}</b>{{if .ISIN}}<div class="foot">{{.ISIN}}</div>{{end}}</td><td>{{if eq .Side "buy"}}<span class="buy">خرید</span>{{else}}<span class="sell">فروش</span>{{end}}</td>
 <td>{{.Price}}</td><td>{{.Quantity}}</td><td>{{jalali .ExecuteAt}}</td><td>{{executionMode .ExecutionMode}}</td>
 <td>{{if eq .Status "scheduled"}}<span class="status scheduled">زمان‌بندی‌شده</span>{{else if eq .Status "ready"}}<span class="status ready">{{if eq .ExecutionMode "api"}}آماده ارسال{{else}}آماده بررسی{{end}}</span>{{else if eq .Status "manual_done"}}<span class="status ready">ثبت دستی تأیید شد</span>{{else if eq .Status "submitting"}}<span class="status ready">در حال ارسال</span>{{else if eq .Status "submitted"}}<span class="status ready">ثبت در رابین</span>{{else if eq .Status "submission_failed"}}<span class="status cancelled">ارسال ناموفق</span>{{else if eq .Status "submission_unknown"}}<span class="status cancelled">نتیجه نامشخص — بررسی لازم</span>{{else}}<span class="status cancelled">لغوشده</span>{{end}}{{if .BrokerOrderID}}<div class="foot">شناسه رابین: {{.BrokerOrderID}}</div>{{end}}{{if .BrokerMessage}}<div class="foot">{{.BrokerMessage}}</div>{{end}}</td>
-<td>{{if or (eq .Status "scheduled") (and (eq .Status "ready") (eq .ExecutionMode "api"))}}<form method="post" action="/orders/cancel"><input type="hidden" name="id" value="{{.ID}}"><button class="cancel">لغو</button></form>{{else if and $.History (eq .Status "ready") (manualMode .ExecutionMode)}}<form method="post" action="/orders/manual-confirm" onsubmit="return confirm('آیا سفارش را شخصاً در سامانه رابین ثبت کرده‌ای؟')"><input type="hidden" name="id" value="{{.ID}}"><button class="submit">ثبت دستی انجام شد</button></form>{{else}}—{{end}}</td></tr>
+<td>{{if or (eq .Status "scheduled") (and (eq .Status "ready") (eq .ExecutionMode "api"))}}<form method="post" action="/orders/cancel"><input type="hidden" name="id" value="{{.ID}}"><button class="cancel">لغو</button></form>{{else if and $.History (eq .Status "ready") (manualMode .ExecutionMode)}}<form method="post" action="/orders/manual-confirm" onsubmit="return confirm('آیا سفارش را شخصاً در سامانه رابین ثبت کرده‌ای؟')"><input type="hidden" name="id" value="{{.ID}}"><button class="submit">ثبت دستی انجام شد</button></form>{{else}}—{{end}}<button type="button" class="copy-order" data-symbol="{{.Symbol}}" data-isin="{{.ISIN}}" data-side="{{.Side}}" data-price="{{.Price}}" data-quantity="{{.Quantity}}" data-mode="{{.ExecutionMode}}" data-execute="{{jalali .ExecuteAt}}" style="margin-right:6px;background:#eff8ff;color:#175cd3;border:1px solid #b2ddff;padding:6px 9px">کپی سفارش</button></td></tr>
 {{else}}<tr><td colspan="8" class="empty">{{if .History}}هنوز موردی در تاریخچه ثبت نشده است.{{else}}سفارش فعالی ثبت نشده است.{{end}}</td></tr>{{end}}
 </tbody></table></div><div class="foot">{{if .History}}این صفحه سفارش‌های سررسیدشده و لغوشده را نگه می‌دارد؛ هیچ سفارشی از داده‌ها حذف نشده است.{{else}}ساعت سرور: {{.Now}} · سفارش‌های سررسیدشده در صفحه تاریخچه نمایش داده می‌شوند.{{end}} وضعیت «آماده بررسی» به معنی ارسال به کارگزاری نیست.</div>
 </section></div></main>
@@ -626,7 +626,6 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 
   if (symbolInput) {
     symbolInput.addEventListener("input", scheduleSymbolSuggestions);
-    symbolInput.addEventListener("change", scheduleSymbolSuggestions);
     symbolInput.addEventListener("keydown", (event) => {
       if (event.key === "Escape") hideSymbolSuggestions();
     });
@@ -656,15 +655,95 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
     syncExecutionMode();
   }
   const orderForm = $("order-form");
+  const draftStorageKey = "rabin-assistant-order-draft-v1";
+  function saveOrderDraft() {
+    if (!orderForm) return;
+    const draft = {};
+    for (const element of orderForm.elements) {
+      if (element.name && element.type !== "submit" && element.type !== "button") draft[element.name] = element.value;
+    }
+    sessionStorage.setItem(draftStorageKey, JSON.stringify(draft));
+  }
+  function restoreOrderDraft() {
+    if (!orderForm) return;
+    let draft = null;
+    try { draft = JSON.parse(sessionStorage.getItem(draftStorageKey) || "null"); } catch (_) {}
+    if (!draft || typeof draft !== "object") return;
+    for (const [name, value] of Object.entries(draft)) {
+      const field = orderForm.elements.namedItem(name);
+      if (field && typeof value === "string") field.value = value;
+    }
+    syncExecutionMode();
+    if (symbolInput && symbolInput.value && isinInput && isinInput.value) {
+      showSymbolLookupStatus("پیش‌نویس قبلی بازیابی شد · ISIN: " + isinInput.value);
+    } else if (symbolInput && symbolInput.value) {
+      showSymbolLookupStatus("پیش‌نویس قبلی بازیابی شد؛ نماد را بررسی کن.");
+    }
+  }
   if (orderForm) {
+    restoreOrderDraft();
     orderForm.addEventListener("submit", (event) => {
       if (executionMode && executionMode.value === "api") {
         const accepted = window.confirm(
           "این گزینه یک سفارش واقعی عادی را به کارگزاری رابین می‌فرستد. اگر کارگزاری آن را در تعطیلی بپذیرد، ممکن است در اولین زمان مجاز بازار اجرا شود. آیا ثبت این سفارش زمان‌بندی‌شده را تأیید می‌کنید؟"
         );
-        if (!accepted) event.preventDefault();
+        if (!accepted) {
+          event.preventDefault();
+          return;
+        }
+      }
+      saveOrderDraft();
+    });
+  }
+
+  function applyCopiedOrder(draft) {
+    if (!orderForm || !draft) return;
+    for (const name of ["symbol", "isin", "side", "price", "quantity", "execution_mode"]) {
+      const field = orderForm.elements.namedItem(name);
+      if (field && typeof draft[name] === "string") field.value = draft[name];
+    }
+    const execute = String(draft.execute_at || "");
+    const parts = execute.trim().split(/\\s+/);
+    if (parts.length === 2) {
+      if (display) display.value = parts[0];
+      const timeField = $("execute-time");
+      if (timeField) timeField.value = parts[1].replace("٫", ".").slice(0, 12);
+    }
+    if (symbolPreset) symbolPreset.value = "";
+    syncExecutionMode();
+    if (symbolInput && isinInput && isinInput.value) showSymbolLookupStatus("سفارش کپی شد؛ اطلاعات را ویرایش و سپس بررسی کن. ISIN: " + isinInput.value);
+    orderForm.scrollIntoView({behavior:"smooth", block:"start"});
+  }
+
+  document.querySelectorAll(".copy-order").forEach((button) => {
+    button.addEventListener("click", () => {
+      const draft = {
+        symbol: button.dataset.symbol || "",
+        isin: button.dataset.isin || "",
+        side: button.dataset.side || "buy",
+        price: button.dataset.price || "",
+        quantity: button.dataset.quantity || "",
+        execution_mode: button.dataset.mode || "manual",
+        execute_at: button.dataset.execute || ""
+      };
+      if (orderForm) {
+        applyCopiedOrder(draft);
+      } else {
+        sessionStorage.setItem("rabin-assistant-copy-order-v1", JSON.stringify(draft));
+        window.location.href = "/";
       }
     });
+  });
+  if (orderForm) {
+    try {
+      const copied = JSON.parse(sessionStorage.getItem("rabin-assistant-copy-order-v1") || "null");
+      if (copied) {
+        sessionStorage.removeItem("rabin-assistant-copy-order-v1");
+        applyCopiedOrder(copied);
+      }
+    } catch (_) {
+      sessionStorage.removeItem("rabin-assistant-copy-order-v1");
+    }
   }
 
   function parseTypedDate() {
