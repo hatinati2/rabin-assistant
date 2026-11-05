@@ -24,13 +24,13 @@ func TestRabinOrderClientSubmitsNormalOrderOnce(t *testing.T) {
 			Price int64          `json:"price"`
 			ValidityType int     `json:"validityType"`
 			ValidityDate *string `json:"validityDate"`
-			OrderSide json.RawMessage `json:"orderSide"`
+			OrderSide int `json:"orderSide"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode order body: %v", err)
 			return
 		}
-		if body.ISIN != "IR1234567890" || body.Quantity != 2 || body.Price != 123456 || body.ValidityType != 1 || body.ValidityDate != nil || string(body.OrderSide) != "7" {
+		if body.ISIN != "IR1234567890" || body.Quantity != 2 || body.Price != 123456 || body.ValidityType != 1 || body.ValidityDate != nil || string(body.OrderSide != rabinOrderSideBuy {
 			t.Errorf("unexpected order payload: %+v", body)
 			return
 		}
@@ -40,7 +40,7 @@ func TestRabinOrderClientSubmitsNormalOrderOnce(t *testing.T) {
 	defer server.Close()
 
 	order := Order{ISIN: "IR1234567890", Side: "buy", Price: 123456, Quantity: 2}
-	result, err := (RabinOrderClient{URL: server.URL + "/api/order", HTTP: server.Client()}).Submit(context.Background(), "test-session", order, "7")
+	result, err := (RabinOrderClient{URL: server.URL + "/api/order", HTTP: server.Client()}).Submit(context.Background(), "test-session", order)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestRabinOrderClientMarksMissingOrderIDAsUnknown(t *testing.T) {
 	defer server.Close()
 
 	order := Order{ISIN: "IR1234567890", Side: "sell", Price: 123456, Quantity: 1}
-	result, err := (RabinOrderClient{URL: server.URL, HTTP: server.Client()}).Submit(context.Background(), "test-session", order, "8")
+	result, err := (RabinOrderClient{URL: server.URL, HTTP: server.Client()}).Submit(context.Background(), "test-session", order)
 	if err == nil || !result.Unknown {
 		t.Fatalf("expected ambiguous result, got result=%+v err=%v", result, err)
 	}
@@ -108,5 +108,14 @@ func TestRabinOrderStoreMarksInterruptedSubmissionUnknown(t *testing.T) {
 	got := store.snapshot()
 	if len(got) != 1 || got[0].Status != statusSubmissionUnknown {
 		t.Fatalf("interrupted submission was not recovered safely: %+v", got)
+	}
+}
+
+func TestRabinBuyAndSellSideEnumsMatchPublicFrontend(t *testing.T) {
+	if rabinOrderSideBuy != 1 {
+		t.Fatalf("BUY enum = %d, want 1", rabinOrderSideBuy)
+	}
+	if rabinOrderSideSell != 2 {
+		t.Fatalf("SELL enum = %d, want 2", rabinOrderSideSell)
 	}
 }
