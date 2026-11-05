@@ -39,6 +39,18 @@ id rabin-assistant >/dev/null 2>&1 || useradd --system --home-dir "$APP" --shell
 install -d -o root -g root -m 0755 "$APP"
 install -d -o rabin-assistant -g rabin-assistant -m 0700 "$DATA"
 
+# Keep the AES-256-GCM key outside the application data directory.
+CREDENTIALS_KEY=/etc/rabin-assistant.key
+if [[ ! -e "$CREDENTIALS_KEY" ]]; then
+  umask 077
+  head -c 32 /dev/urandom > "$CREDENTIALS_KEY"
+elif [[ ! -f "$CREDENTIALS_KEY" ]] || [[ "$(wc -c < "$CREDENTIALS_KEY")" -ne 32 ]]; then
+  echo "کلید رمزنگاری $CREDENTIALS_KEY باید یک فایل معمولی دقیقاً ۳۲ بایتی باشد؛ نصب متوقف شد تا کلید قبلی بازنویسی نشود." >&2
+  exit 1
+fi
+chown root:rabin-assistant "$CREDENTIALS_KEY"
+chmod 0640 "$CREDENTIALS_KEY"
+
 if [[ ! -f "$CONF" ]]; then
   PASS="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
   umask 077
