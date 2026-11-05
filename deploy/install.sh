@@ -75,6 +75,9 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
+echo 'اجرای تست‌های خودکار...'
+go test ./...
+
 echo 'کامپایل برنامه...'
 go build -trimpath -ldflags='-s -w' -o "$APP/rabin-assistant" ./cmd/server
 chmod 0755 "$APP/rabin-assistant"
