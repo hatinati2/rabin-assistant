@@ -10,6 +10,14 @@ command -v systemctl >/dev/null 2>&1 || {
   exit 1
 }
 
+# Keep the operating system and systemd logs on Iran local time.
+if [[ ! -e /usr/share/zoneinfo/Asia/Tehran ]]; then
+  apt-get update
+  apt-get install -y tzdata
+fi
+timedatectl set-timezone Asia/Tehran
+echo "زمان سیستم روی ایران تنظیم شد: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+
 if ! command -v go >/dev/null 2>&1; then
   echo 'Go نصب نیست؛ نصب Go از مخازن Ubuntu...'
   apt-get update
