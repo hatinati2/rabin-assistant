@@ -28,8 +28,10 @@ if [[ ! -x "$VENV/bin/python" ]]; then
   runuser -u rabin-assistant -- python3 -m venv "$VENV"
 fi
 
-runuser -u rabin-assistant -- "$VENV/bin/python" -m pip install --upgrade pip
-runuser -u rabin-assistant -- "$VENV/bin/python" -m pip install --upgrade playwright
+# Updating pip is unnecessary here and can fail on restricted/unstable networks.
+# Retry package downloads with a longer timeout and without a per-user cache.
+runuser -u rabin-assistant -- env PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 \
+  "$VENV/bin/python" -m pip install --retries 8 --timeout 120 playwright
 
 echo "نصب کتابخانه‌های سیستمی Chromium..."
 "$VENV/bin/python" -m playwright install-deps chromium
