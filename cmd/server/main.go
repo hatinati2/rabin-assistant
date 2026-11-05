@@ -564,7 +564,12 @@ func sameOrigin(r *http.Request) bool {
 	if referer := strings.TrimSpace(r.Referer()); referer != "" {
 		return sameHostURL(referer, r.Host)
 	}
-	return strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "same-origin")
+	if fetchSite := strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")); fetchSite != "" {
+		return strings.EqualFold(fetchSite, "same-origin")
+	}
+	// Some browsers and reverse proxies omit all three headers on normal form POSTs.
+	// Basic authentication still protects the panel; do not reject these requests.
+	return true
 }
 
 func sameHostURL(rawURL, requestHost string) bool {
