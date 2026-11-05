@@ -115,6 +115,25 @@ func (s *Store) add(order Order) error {
 	return nil
 }
 
+// clearHistory removes non-scheduled entries and preserves active scheduled orders.
+func (s *Store) clearHistory() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.orders
+	kept := make([]Order, 0, len(previous))
+	for _, order := range previous {
+		if order.Status == statusScheduled {
+			kept = append(kept, order)
+		}
+	}
+	s.orders = kept
+	if err := s.saveLocked(); err != nil {
+		s.orders = previous
+		return err
+	}
+	return nil
+}
+
 func (s *Store) confirmManual(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -439,7 +458,6 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 @media(max-width:800px){.grid{grid-template-columns:1fr}.head{align-items:flex-start;gap:10px;flex-direction:column}}
 </style></head><body data-jyear="{{.JYear}}" data-jmonth="{{.JMonth}}" data-jday="{{.JDay}}"><main class="wrap">
 <div class="head"><div><h1>دستیار رابین</h1><div class="muted" style="margin-top:7px">مدیریت سفارش‌ها · ساعت تهران</div></div><div class="nav"><a class="{{if not .History}}active{{end}}" href="/">سفارش‌های فعال</a><a class="{{if .History}}active{{end}}" href="/history">تاریخچه</a><a href="/settings">اتصال به رابین</a></div><span class="tag">{{if .APIAvailable}}ارسال واقعی API فعال است{{else}}ارسال واقعی API غیرفعال است{{end}}</span></div>
-<section class="server-clock" aria-live="off"><div><div class="server-clock-label">ساعت فعلی سرور (تهران)</div><div class="server-clock-status" id="server-clock-status">در حال دریافت زمان سرور…</div></div><time class="server-clock-value" id="server-clock" dir="ltr">--:--:--</time></section>
 <div class="note"><b>دو مسیر اجرا:</b> مسیر «بدون API» سفارش را برای ثبت دستی آماده می‌کند. مسیر «با API» فقط در صورت فعال‌سازی صریح در تنظیمات سرور، وجود نشست معتبر و ثبت ISIN، در زمان مقرر یک درخواست سفارش عادی به رابین ارسال می‌کند. در صورت نامشخص بودن نتیجه ارسال، سیستم سفارش را خودکار تکرار نمی‌کند.</div>
 {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="msg">{{.Notice}}</div>{{end}}
 <div class="grid{{if .History}} history{{end}}">{{if not .History}}<section class="card"><h2>تعریف سفارش</h2>
@@ -460,10 +478,11 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
     <div class="cal-grid" id="cal-days"></div>
   </div>
 </div>
+<section class="server-clock" aria-live="off" style="margin-top:12px"><div><div class="server-clock-label">ساعت فعلی سرور (تهران)</div><div class="server-clock-status" id="server-clock-status">در حال دریافت زمان سرور…</div></div><time class="server-clock-value" id="server-clock" dir="ltr">--:--:--.---</time></section>
 <label>ساعت اجرا (تهران، با دقت میلی‌ثانیه)</label><input id="execute-time" name="execute_time" type="time" step="0.001" value="08:44:50.000" required>
 <button class="submit" type="submit">ذخیره سفارش</button></form>
 <div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود. در مسیر API، ISIN دقیق نماد الزامی است.</div></section>{{end}}
-<section class="card"><h2>{{if .History}}تاریخچه سفارش‌ها{{else}}سفارش‌های فعال{{end}} ({{len .Orders}})</h2><div class="tablewrap"><table>
+<section class="card"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><h2 style="margin:0">{{if .History}}تاریخچه سفارش‌ها{{else}}سفارش‌های فعال{{end}} ({{len .Orders}})</h2>{{if .History}}<form method="post" action="/history/clear" onsubmit="return confirm('تمام موارد تاریخچه برای همیشه پاک شوند؟ سفارش‌های زمان‌بندی‌شده فعال دست‌نخورده می‌مانند.')"><button type="submit" class="cancel">پاک کردن تاریخچه</button></form>{{end}}</div><div class="tablewrap"><table>
 <thead><tr><th>نماد</th><th>نوع</th><th>قیمت</th><th>تعداد</th><th>زمان تهران</th><th>مسیر</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>
 {{range .Orders}}<tr><td><b>{{.Symbol}}</b>{{if .ISIN}}<div class="foot">{{.ISIN}}</div>{{end}}</td><td>{{if eq .Side "buy"}}<span class="buy">خرید</span>{{else}}<span class="sell">فروش</span>{{end}}</td>
 <td>{{.Price}}</td><td>{{.Quantity}}</td><td>{{jalali .ExecuteAt}}</td><td>{{executionMode .ExecutionMode}}</td>
@@ -834,7 +853,7 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
     let performanceBaseMs = 0;
     const formatter = new Intl.DateTimeFormat("fa-IR-u-nu-latn", {
       timeZone: "Asia/Tehran", hour: "2-digit", minute: "2-digit",
-      second: "2-digit", hourCycle: "h23"
+      second: "2-digit", fractionalSecondDigits: 3, hourCycle: "h23"
     });
     function tick() {
       if (!serverBaseMs) return;
@@ -947,6 +966,8 @@ func main() {
 			data.Notice = "سفارش لغو شد."
 		case "manual_confirmed":
 			data.Notice = "تأیید دستی ثبت شد. این تأیید به معنی راستی‌آزمایی خودکار کارگزاری نیست."
+		case "history_cleared":
+			data.Notice = "تاریخچه پاک شد؛ سفارش‌های زمان‌بندی‌شده فعال حفظ شدند."
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := page.Execute(w, data); err != nil {
@@ -1025,6 +1046,17 @@ func main() {
 	})
 	mux.HandleFunc("GET /history", func(w http.ResponseWriter, r *http.Request) {
 		renderOrdersPage(w, r, true)
+	})
+	mux.HandleFunc("POST /history/clear", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "درخواست نامعتبر", http.StatusForbidden)
+			return
+		}
+		if err := store.clearHistory(); err != nil {
+			renderError(w, store, "پاک کردن تاریخچه انجام نشد.")
+			return
+		}
+		http.Redirect(w, r, "/history?notice=history_cleared", http.StatusSeeOther)
 	})
 	mux.HandleFunc("POST /orders", func(w http.ResponseWriter, r *http.Request) {
 		if !sameOrigin(r) {
