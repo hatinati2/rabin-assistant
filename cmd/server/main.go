@@ -889,13 +889,13 @@ th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
   // Display-only batch planner. It calculates timestamps through the server
   // endpoint and never creates, stores, schedules, or submits broker orders.
   (() => {
-    const button = $("batch-plan-calculate");
-    const targetField = $("execute-time");
-    const leadField = $("batch-lead-seconds");
-    const intervalField = $("batch-interval-ms");
-    const errorBox = $("batch-plan-error");
-    const resultBox = $("batch-plan-result");
-    const rows = $("batch-plan-rows");
+    const button = document.getElementById("batch-plan-calculate");
+    const targetField = document.getElementById("execute-time");
+    const leadField = document.getElementById("batch-lead-seconds");
+    const intervalField = document.getElementById("batch-interval-ms");
+    const errorBox = document.getElementById("batch-plan-error");
+    const resultBox = document.getElementById("batch-plan-result");
+    const rows = document.getElementById("batch-plan-rows");
     if (!button || !targetField || !leadField || !intervalField || !errorBox || !resultBox || !rows) return;
 
     function clearResult() {
@@ -968,9 +968,9 @@ th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
           addCell(row, slot.time);
           rows.appendChild(row);
         }
-        $("batch-plan-count").textContent = String(plan.count);
-        $("batch-plan-first").textContent = plan.first;
-        $("batch-plan-last").textContent = plan.last;
+        document.getElementById("batch-plan-count").textContent = String(plan.count);
+        document.getElementById("batch-plan-first").textContent = plan.first;
+        document.getElementById("batch-plan-last").textContent = plan.last;
         resultBox.hidden = false;
       } catch (error) {
         showError(error && error.message ? error.message : "خطا در محاسبه برنامه.");
