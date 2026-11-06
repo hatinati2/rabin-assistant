@@ -105,11 +105,32 @@ func (s *Store) activeSnapshot() []Order  { return s.list(false) }
 func (s *Store) historySnapshot() []Order { return s.list(true) }
 
 func (s *Store) add(order Order) error {
+	return s.addMany([]Order{order})
+}
+
+func (s *Store) addMany(orders []Order) error {
+	if len(orders) == 0 {
+		return errors.New("هیچ سفارشی برای ثبت وجود ندارد")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.orders = append(s.orders, order)
+	previous := s.orders
+	ids := make(map[string]struct{}, len(previous)+len(orders))
+	for _, existing := range previous {
+		ids[existing.ID] = struct{}{}
+	}
+	for _, order := range orders {
+		if order.ID == "" {
+			return errors.New("شناسه سفارش خالی است")
+		}
+		if _, exists := ids[order.ID]; exists {
+			return errors.New("شناسه تکراری در فهرست سفارش‌ها وجود دارد")
+		}
+		ids[order.ID] = struct{}{}
+	}
+	s.orders = append(append([]Order(nil), previous...), orders...)
 	if err := s.saveLocked(); err != nil {
-		s.orders = s.orders[:len(s.orders)-1]
+		s.orders = previous
 		return err
 	}
 	return nil
@@ -480,11 +501,12 @@ th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 <div class="form-field"><section class="server-clock" aria-live="off"><div><div class="server-clock-label">ساعت تهران</div><div class="server-clock-status" id="server-clock-status">در حال دریافت زمان سرور…</div></div><time class="server-clock-value" id="server-clock" dir="ltr">--:--:--.---</time></section></div>
 <div class="form-field"><label>ساعت اجرا (تهران، با دقت میلی‌ثانیه)</label><input id="execute-time" name="execute_time" type="time" step="0.001" value="08:44:50.000" required></div>
 <details class="batch-planner wide" id="batch-planner"><summary>برنامه‌ریز نوبت‌های سرخطی</summary><div class="batch-planner-body">
-<div class="batch-planner-note">زمان هدف از فیلد «ساعت اجرا» خوانده می‌شود. نوبت‌ها از چند ثانیه قبل شروع می‌شوند و با فاصله تعیین‌شده، تا قبل از لحظه هدف ادامه دارند. این بخش فقط زمان‌بندی را محاسبه می‌کند؛ هیچ سفارشی ثبت، ذخیره یا ارسال نمی‌شود.</div>
-<div class="batch-plan-controls"><div><label for="batch-lead-seconds">شروع چند ثانیه قبل؟</label><input id="batch-lead-seconds" type="number" min="0.001" max="3600" step="0.001" value="10"></div><div><label for="batch-interval-ms">فاصله بین نوبت‌ها (میلی‌ثانیه)</label><input id="batch-interval-ms" type="number" min="1" max="60000" step="1" value="200"></div></div>
+<div class="batch-planner-note">زمان هدف از فیلد «ساعت اجرا» خوانده می‌شود. نوبت‌ها از چند ثانیه قبل شروع می‌شوند و با فاصله تعیین‌شده تا قبل از لحظه هدف ادامه دارند. پس از محاسبه، می‌توانی همه نوبت‌ها را به‌صورت سفارش‌های مستقل و فقط در مسیر بدون API ذخیره کنی.</div>
+<div class="batch-plan-controls"><div><label for="batch-lead-seconds">شروع چند ثانیه قبل؟</label><input id="batch-lead-seconds" type="number" min="0.001" max="3600" step="0.001" value="10"></div><div><label for="batch-interval-ms">فاصله بین نوبت‌ها (میلی‌ثانیه)</label><input id="batch-interval-ms" type="number" min="1" max="60000" step="1" value="200"></div><div><label for="batch-quantity-mode">روش تعیین تعداد سهم</label><select id="batch-quantity-mode"><option value="each">تعداد واردشده برای هر سفارش</option><option value="total">تقسیم تعداد کل بین سفارش‌ها</option></select></div><div><label for="batch-order-count">تعداد سفارش‌ها</label><input id="batch-order-count" type="number" min="1" max="5000" step="1" value="50"></div></div>
 <button type="button" class="batch-plan-calc" id="batch-plan-calculate">محاسبه نوبت‌ها</button>
+<button type="button" class="batch-plan-calc" id="batch-create-orders" disabled>ساخت سفارش‌های زمان‌بندی‌شده</button>
 <div class="batch-plan-error" id="batch-plan-error" role="alert" hidden></div>
-<div class="batch-plan-result" id="batch-plan-result" hidden aria-live="polite"><div class="batch-plan-summary"><span>تعداد نوبت‌ها: <b id="batch-plan-count">—</b></span><span>اولین نوبت: <b id="batch-plan-first" dir="ltr">—</b></span><span>آخرین نوبت: <b id="batch-plan-last" dir="ltr">—</b></span></div><div class="batch-plan-table-wrap"><table class="batch-plan-table"><thead><tr><th>شماره</th><th>زمان نوبت (تهران)</th></tr></thead><tbody id="batch-plan-rows"></tbody></table></div></div>
+<div class="batch-plan-result" id="batch-plan-result" hidden aria-live="polite"><div class="batch-plan-summary"><span>تعداد نوبت‌ها: <b id="batch-plan-count">—</b></span><span>اولین نوبت: <b id="batch-plan-first" dir="ltr">—</b></span><span>آخرین نوبت: <b id="batch-plan-last" dir="ltr">—</b></span><span>تعداد سهم هر سفارش: <b id="batch-plan-quantity">—</b></span></div><div class="batch-plan-table-wrap"><table class="batch-plan-table"><thead><tr><th>شماره</th><th>زمان نوبت (تهران)</th></tr></thead><tbody id="batch-plan-rows"></tbody></table></div></div>
 </div></details>
 <button class="submit wide" type="submit">ذخیره سفارش</button></div></form>
 <div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود. در مسیر API، ISIN دقیق نماد الزامی است.</div></section>{{end}}
@@ -896,12 +918,19 @@ th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
     const errorBox = document.getElementById("batch-plan-error");
     const resultBox = document.getElementById("batch-plan-result");
     const rows = document.getElementById("batch-plan-rows");
-    if (!button || !targetField || !leadField || !intervalField || !errorBox || !resultBox || !rows) return;
+    const createButton = document.getElementById("batch-create-orders");
+    const quantityMode = document.getElementById("batch-quantity-mode");
+    const orderCount = document.getElementById("batch-order-count");
+    const orderForm = document.getElementById("order-form");
+    let currentPlan = null;
+    if (!button || !targetField || !leadField || !intervalField || !errorBox || !resultBox || !rows || !createButton || !quantityMode || !orderCount || !orderForm) return;
 
     function clearResult() {
       resultBox.hidden = true;
       errorBox.hidden = true;
       rows.replaceChildren();
+      createButton.disabled = true;
+      currentPlan = null;
     }
     function showError(message) {
       resultBox.hidden = true;
@@ -961,6 +990,8 @@ th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
           throw new Error(message || "محاسبه برنامه انجام نشد.");
         }
         const plan = await response.json();
+        currentPlan = plan;
+        orderCount.value = String(plan.count);
         rows.replaceChildren();
         for (const slot of plan.slots) {
           const row = document.createElement("tr");
@@ -971,7 +1002,11 @@ th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
         document.getElementById("batch-plan-count").textContent = String(plan.count);
         document.getElementById("batch-plan-first").textContent = plan.first;
         document.getElementById("batch-plan-last").textContent = plan.last;
+        const qty = Number(orderForm.elements.quantity.value);
+        const perOrder = quantityMode.value === "each" ? qty : Math.floor(qty / plan.count);
+        document.getElementById("batch-plan-quantity").textContent = Number.isFinite(perOrder) && perOrder > 0 ? perOrder.toLocaleString("fa-IR") : "—";
         resultBox.hidden = false;
+        createButton.disabled = false;
       } catch (error) {
         showError(error && error.message ? error.message : "خطا در محاسبه برنامه.");
       } finally {
@@ -979,7 +1014,37 @@ th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
         button.textContent = "محاسبه نوبت‌ها";
       }
     });
-    for (const field of [targetField, leadField, intervalField]) {
+    createButton.addEventListener("click", async () => {
+      if (!currentPlan) {
+        showError("ابتدا نوبت‌ها را محاسبه کن.");
+        return;
+      }
+      const formData = new FormData(orderForm);
+      formData.set("batch_order_count", String(currentPlan.count));
+      formData.set("batch_lead_seconds", leadField.value);
+      formData.set("batch_interval_ms", intervalField.value);
+      formData.set("batch_quantity_mode", quantityMode.value);
+      createButton.disabled = true;
+      createButton.textContent = "در حال ذخیره سفارش‌ها…";
+      errorBox.hidden = true;
+      try {
+        const body = new URLSearchParams();
+        for (const [key, value] of formData.entries()) body.append(key, String(value));
+        const response = await fetch("/orders/batch", {
+          method: "POST", body, cache: "no-store",
+          headers: {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"}
+        });
+        if (!response.ok) throw new Error((await response.text()) || "ذخیره سفارش‌ها انجام نشد.");
+        const result = await response.json();
+        window.location.assign("/?notice=batch_saved&count=" + encodeURIComponent(result.count));
+      } catch (error) {
+        showError(error && error.message ? error.message : "ذخیره دسته سفارش‌ها ناموفق بود.");
+        createButton.disabled = false;
+      } finally {
+        createButton.textContent = "ساخت سفارش‌های زمان‌بندی‌شده";
+      }
+    });
+    for (const field of [targetField, leadField, intervalField, orderCount, quantityMode, orderForm.elements.quantity, orderForm.elements.symbol, orderForm.elements.price, orderForm.elements.side, orderForm.elements.execution_mode]) {
       field.addEventListener("input", clearResult);
       field.addEventListener("change", clearResult);
     }
@@ -1086,6 +1151,8 @@ func main() {
 		switch r.URL.Query().Get("notice") {
 		case "saved":
 			data.Notice = "سفارش ذخیره شد."
+		case "batch_saved":
+			data.Notice = "همه سفارش‌های برنامه‌ریزی‌شده به‌صورت مستقل و بدون ارسال به رابین ذخیره شدند."
 		case "cancelled":
 			data.Notice = "سفارش لغو شد."
 		case "manual_confirmed":
@@ -1181,6 +1248,85 @@ func main() {
 			return
 		}
 		http.Redirect(w, r, "/history?notice=history_cleared", http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /orders/batch", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "درخواست نامعتبر", http.StatusForbidden)
+			return
+		}
+		if !strings.EqualFold(env("RABIN_PREVIEW_MODE", "false"), "true") {
+			http.Error(w, "ساخت دسته‌ای سفارش فقط در نسخه آزمایشی فعال است", http.StatusForbidden)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "فرم نامعتبر است یا حجم آن بیش از حد مجاز است", http.StatusBadRequest)
+			return
+		}
+		if r.FormValue("execution_mode") != executionModeManual {
+			http.Error(w, "ساخت دسته‌ای فقط در مسیر بدون API مجاز است", http.StatusBadRequest)
+			return
+		}
+		count, countErr := strconv.Atoi(r.FormValue("batch_order_count"))
+		leadMS, leadErr := strconv.ParseFloat(r.FormValue("batch_lead_seconds"), 64)
+		intervalMS, intervalErr := strconv.ParseInt(r.FormValue("batch_interval_ms"), 10, 64)
+		if countErr != nil || count < 1 || count > orderPlanMaxSlots ||
+			leadErr != nil || leadMS <= 0 || leadMS > 3600 ||
+			intervalErr != nil || intervalMS < 1 || intervalMS > orderPlanMaxIntervalMS {
+			http.Error(w, "تعداد سفارش یا تنظیمات فاصله زمانی معتبر نیست", http.StatusBadRequest)
+			return
+		}
+		leadMilliseconds := int64(leadMS * 1000)
+		dateText := strings.TrimSpace(r.FormValue("execute_at_date"))
+		target, err := parseJalaliDateTime(dateText + " " + strings.TrimSpace(r.FormValue("execute_time")))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		targetDay := time.Date(target.Year(), target.Month(), target.Day(), 0, 0, 0, 0, tehran())
+		targetMS := target.Sub(targetDay).Milliseconds()
+		plan, err := buildOrderPlan(targetMS, leadMilliseconds, intervalMS)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if plan.Count != count {
+			http.Error(w, fmt.Sprintf("تعداد نوبت‌های محاسبه‌شده %d است؛ مقدار تعداد سفارش‌ها را با آن برابر کن", plan.Count), http.StatusBadRequest)
+			return
+		}
+		mode := strings.TrimSpace(r.FormValue("batch_quantity_mode"))
+		quantity, quantityErr := strconv.ParseInt(r.FormValue("quantity"), 10, 64)
+		quantities, err := allocateBatchQuantities(quantity, count, mode)
+		if quantityErr != nil || err != nil {
+			if err == nil { err = errors.New("تعداد سهم معتبر نیست") }
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		firstMS := targetMS - leadMilliseconds
+		r.Form.Set("execute_at", dateText + " " + formatOrderPlanClock(firstMS))
+		now := time.Now().In(tehran())
+		baseOrder, err := validateOrder(r, now)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		orders := make([]Order, 0, count)
+		for i := 0; i < count; i++ {
+			order := baseOrder
+			order.ID = fmt.Sprintf("%d-%05d", now.UnixNano(), i+1)
+			order.Quantity = quantities[i]
+			order.ExecuteAt = targetDay.Add(time.Duration(firstMS+int64(i)*intervalMS) * time.Millisecond)
+			orders = append(orders, order)
+		}
+		if err := store.addMany(orders); err != nil {
+			http.Error(w, "ذخیره یکپارچه سفارش‌ها انجام نشد: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(struct {
+			Count int `json:"count"`
+		}{Count: len(orders)})
 	})
 	mux.HandleFunc("POST /orders", func(w http.ResponseWriter, r *http.Request) {
 		if !sameOrigin(r) {
