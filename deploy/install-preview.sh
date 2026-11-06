@@ -74,6 +74,7 @@ set_env RABIN_DATA_DIR "$DATA"
 set_env RABIN_CREDENTIALS_KEY_FILE "$KEY"
 set_env RABIN_ENABLE_LIVE_ORDER_SUBMISSION "false"
 set_env RABIN_PREVIEW_MODE "true"
+set_env RABIN_PREVIEW_LIVE_ORDER_OPT_IN "false"
 chmod 600 "$CONF"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -101,4 +102,4 @@ systemctl --no-pager --full status "$UNIT" || true
 echo
 echo 'اطلاعات ورود: cat /root/rabin-assistant-preview-credentials.txt'
 echo 'پنل آزمایشی: http://SERVER_IP:8099'
-echo 'ارسال واقعی API در نسخه آزمایشی اجباری و خاموش است.'
+echo 'ارسال واقعی API در نسخه آزمایشی به‌صورت پیش‌فرض خاموش است؛ فعال‌سازی فقط با تغییر صریح RABIN_PREVIEW_LIVE_ORDER_OPT_IN انجام می‌شود.'
