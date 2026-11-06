@@ -461,7 +461,8 @@ th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 .symbol-suggestion:last-child{border-bottom:0}.symbol-suggestion:hover,.symbol-suggestion:focus{background:#eff8ff;outline:none}
 .symbol-suggestion-main{display:flex;flex-direction:column;gap:4px;min-width:0}.symbol-suggestion-name{font-weight:bold}.symbol-suggestion-company{font-size:11px;color:#667085;white-space:normal}.symbol-suggestion-isin{direction:ltr;font-size:10px;color:#475467;white-space:nowrap}
 .datebox{position:relative}.datebar{display:flex;gap:8px}.datebar input{flex:1}.datebar button{white-space:nowrap}.calendar{margin-top:8px;padding:12px;border:1px solid #d0d5dd;border-radius:10px;background:#fff}.cal-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}.cal-nav{background:#f2f4f7;color:#344054;padding:7px 10px}.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;text-align:center}.cal-grid span{padding:7px 0;color:#667085;font-size:11px}.cal-day{background:#f8fafc;color:#182230;padding:9px 2px;border-radius:7px}.cal-day:hover,.cal-day.selected{background:#175cd3;color:#fff}.cal-day.today{outline:2px solid #84adff}.cal-empty{min-height:34px}
-@media(max-width:900px){.grid{grid-template-columns:1fr}.head{align-items:flex-start;gap:10px;flex-direction:column}}@media(max-width:560px){.form-grid{grid-template-columns:1fr}.form-field.wide,.form-grid>.wide{grid-column:auto}}
+.batch-planner{grid-column:1/-1;margin:4px 0;border:1px solid #d0d5dd;border-radius:9px;padding:7px 9px;background:#f8fafc}.batch-planner>summary{cursor:pointer;font-size:11px;font-weight:bold;color:#344054}.batch-planner-body{padding-top:7px}.batch-planner-note{font-size:10px;line-height:1.55;color:#667085;margin-bottom:6px}.batch-plan-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px}.batch-plan-controls label{font-size:10px;margin:4px 0}.batch-plan-controls input{min-height:32px;padding:5px 8px;font-size:12px}.batch-plan-calc{margin-top:7px;font-size:11px;padding:7px 10px}.batch-plan-error{margin-top:6px;color:#b42318;font-size:10px}.batch-plan-result{margin-top:7px;padding:7px;background:#fff;border:1px solid #e4e7ec;border-radius:8px}.batch-plan-summary{display:flex;gap:10px;flex-wrap:wrap;font-size:10px}.batch-plan-table-wrap{max-height:140px;overflow:auto;margin-top:6px}.batch-plan-table{font-size:10px}.batch-plan-table th,.batch-plan-table td{padding:4px 6px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.head{align-items:flex-start;gap:10px;flex-direction:column}}@media(max-width:560px){.form-grid{grid-template-columns:1fr}.form-field.wide,.form-grid>.wide{grid-column:auto}.batch-plan-controls{grid-template-columns:1fr}}
 </style></head><body data-jyear="{{.JYear}}" data-jmonth="{{.JMonth}}" data-jday="{{.JDay}}"><main class="wrap">
 <div class="head"><div><h1>دستیار رابین</h1><div class="muted" style="margin-top:7px">مدیریت سفارش‌ها · ساعت تهران</div></div><div class="nav"><a class="{{if not .History}}active{{end}}" href="/">سفارش‌های فعال</a><a class="{{if .History}}active{{end}}" href="/history">تاریخچه</a><a href="/settings">اتصال به رابین</a></div><span class="tag">{{if .APIAvailable}}ارسال واقعی API فعال است{{else}}ارسال واقعی API غیرفعال است{{end}}</span></div>
 <div class="note"><b>دو مسیر اجرا:</b> مسیر «بدون API» سفارش را برای ثبت دستی آماده می‌کند. مسیر «با API» فقط در صورت فعال‌سازی صریح در تنظیمات سرور، وجود نشست معتبر و ثبت ISIN، در زمان مقرر یک درخواست سفارش عادی به رابین ارسال می‌کند. در صورت نامشخص بودن نتیجه ارسال، سیستم سفارش را خودکار تکرار نمی‌کند.</div>
@@ -478,6 +479,13 @@ th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 <div class="form-field"><label>تاریخ شمسی</label><div class="datebox"><div class="datebar"><input id="jalali-date-display" name="execute_at_date" type="text" value="" inputmode="numeric" dir="ltr" placeholder="مثلاً ۱۴۰۵/۰۸/۱۴" pattern="[0-9۰-۹٠-٩]{4}[/.-][0-9۰-۹٠-٩]{1,2}[/.-][0-9۰-۹٠-٩]{1,2}" autocomplete="off" required><button type="button" id="calendar-toggle">تقویم</button></div><div id="jalali-calendar" class="calendar" hidden><div class="cal-head"><button type="button" id="cal-prev" class="cal-nav">ماه قبل</button><strong id="cal-title">تقویم شمسی</strong><button type="button" id="cal-next" class="cal-nav">ماه بعد</button></div><div class="cal-grid" id="cal-weekdays"><span>ش</span><span>ی</span><span>د</span><span>س</span><span>چ</span><span>پ</span><span>ج</span></div><div class="cal-grid" id="cal-days"></div></div></div></div>
 <div class="form-field"><section class="server-clock" aria-live="off"><div><div class="server-clock-label">ساعت تهران</div><div class="server-clock-status" id="server-clock-status">در حال دریافت زمان سرور…</div></div><time class="server-clock-value" id="server-clock" dir="ltr">--:--:--.---</time></section></div>
 <div class="form-field"><label>ساعت اجرا (تهران، با دقت میلی‌ثانیه)</label><input id="execute-time" name="execute_time" type="time" step="0.001" value="08:44:50.000" required></div>
+<details class="batch-planner wide" id="batch-planner"><summary>برنامه‌ریز نوبت‌های سرخطی</summary><div class="batch-planner-body">
+<div class="batch-planner-note">زمان هدف از فیلد «ساعت اجرا» خوانده می‌شود. نوبت‌ها از چند ثانیه قبل شروع می‌شوند و با فاصله تعیین‌شده، تا قبل از لحظه هدف ادامه دارند. این بخش فقط زمان‌بندی را محاسبه می‌کند؛ هیچ سفارشی ثبت، ذخیره یا ارسال نمی‌شود.</div>
+<div class="batch-plan-controls"><div><label for="batch-lead-seconds">شروع چند ثانیه قبل؟</label><input id="batch-lead-seconds" type="number" min="0.001" max="3600" step="0.001" value="10"></div><div><label for="batch-interval-ms">فاصله بین نوبت‌ها (میلی‌ثانیه)</label><input id="batch-interval-ms" type="number" min="1" max="60000" step="1" value="200"></div></div>
+<button type="button" class="batch-plan-calc" id="batch-plan-calculate">محاسبه نوبت‌ها</button>
+<div class="batch-plan-error" id="batch-plan-error" role="alert" hidden></div>
+<div class="batch-plan-result" id="batch-plan-result" hidden aria-live="polite"><div class="batch-plan-summary"><span>تعداد نوبت‌ها: <b id="batch-plan-count">—</b></span><span>اولین نوبت: <b id="batch-plan-first" dir="ltr">—</b></span><span>آخرین نوبت: <b id="batch-plan-last" dir="ltr">—</b></span></div><div class="batch-plan-table-wrap"><table class="batch-plan-table"><thead><tr><th>شماره</th><th>زمان نوبت (تهران)</th></tr></thead><tbody id="batch-plan-rows"></tbody></table></div></div>
+</div></details>
 <button class="submit wide" type="submit">ذخیره سفارش</button></div></form>
 <div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود. در مسیر API، ISIN دقیق نماد الزامی است.</div></section>{{end}}
 <section class="card"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><h2 style="margin:0">{{if .History}}تاریخچه سفارش‌ها{{else}}سفارش‌های فعال{{end}} ({{len .Orders}})</h2>{{if .History}}<form method="post" action="/history/clear" onsubmit="return confirm('تمام موارد تاریخچه برای همیشه پاک شوند؟ سفارش‌های زمان‌بندی‌شده فعال دست‌نخورده می‌مانند.')"><button type="submit" class="cancel">پاک کردن تاریخچه</button></form>{{end}}</div><div class="tablewrap"><table>
@@ -878,6 +886,114 @@ th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
     sync();
     window.setInterval(sync, 30000);
   })();
+  // Display-only batch planner. It calculates timestamps through the server
+  // endpoint and never creates, stores, schedules, or submits broker orders.
+  (() => {
+    const button = $("batch-plan-calculate");
+    const targetField = $("execute-time");
+    const leadField = $("batch-lead-seconds");
+    const intervalField = $("batch-interval-ms");
+    const errorBox = $("batch-plan-error");
+    const resultBox = $("batch-plan-result");
+    const rows = $("batch-plan-rows");
+    if (!button || !targetField || !leadField || !intervalField || !errorBox || !resultBox || !rows) return;
+
+    function clearResult() {
+      resultBox.hidden = true;
+      errorBox.hidden = true;
+      rows.replaceChildren();
+    }
+    function showError(message) {
+      resultBox.hidden = true;
+      errorBox.textContent = message;
+      errorBox.hidden = false;
+    }
+    function parseClockMilliseconds(value) {
+      const match = String(value || "").match(/^(\\d{2}):(\\d{2})(?::(\\d{2})(?:\\.(\\d{1,3}))?)?$/);
+      if (!match) return null;
+      const hour = Number(match[1]);
+      const minute = Number(match[2]);
+      const second = Number(match[3] || "0");
+      const millis = Number((match[4] || "").padEnd(3, "0"));
+      if (hour > 23 || minute > 59 || second > 59) return null;
+      return ((hour * 60 + minute) * 60 + second) * 1000 + millis;
+    }
+    function formatTime(value) {
+      const hour = Math.floor(value / 3600000);
+      const minute = Math.floor(value / 60000) % 60;
+      const second = Math.floor(value / 1000) % 60;
+      const millis = value % 1000;
+      return String(hour).padStart(2, "0") + ":" +
+        String(minute).padStart(2, "0") + ":" +
+        String(second).padStart(2, "0") + "." +
+        String(millis).padStart(3, "0");
+    }
+    function addCell(row, text) {
+      const cell = document.createElement("td");
+      cell.textContent = text;
+      row.appendChild(cell);
+    }
+    button.addEventListener("click", async () => {
+      clearResult();
+      const targetMS = parseClockMilliseconds(targetField.value);
+      const leadSeconds = Number(leadField.value);
+      const intervalMS = Number(intervalField.value);
+      if (targetMS === null) {
+        showError("ابتدا ساعت هدف را در فیلد «ساعت اجرا» به‌درستی وارد کن.");
+        return;
+      }
+      if (!Number.isFinite(leadSeconds) || leadSeconds <= 0 || leadSeconds > 3600) {
+        showError("زمان شروع باید بیشتر از صفر و حداکثر ۳۶۰۰ ثانیه باشد.");
+        return;
+      }
+      if (!Number.isInteger(intervalMS) || intervalMS < 1 || intervalMS > 60000) {
+        showError("فاصله نوبت‌ها باید عدد صحیح بین ۱ تا ۶۰٬۰۰۰ میلی‌ثانیه باشد.");
+        return;
+      }
+      const leadMS = Math.round(leadSeconds * 1000);
+      if (targetMS < leadMS) {
+        showError("شروع برنامه به روز قبل می‌افتد؛ تاریخ هدف را برای روز بعد تنظیم کن.");
+        return;
+      }
+      button.disabled = true;
+      button.textContent = "در حال محاسبه…";
+      try {
+        const query = new URLSearchParams({
+          target_ms: String(targetMS),
+          lead_ms: String(leadMS),
+          interval_ms: String(intervalMS)
+        });
+        const response = await fetch("/api/order-plan?" + query.toString(), {
+          cache: "no-store", headers: {"Accept": "application/json"}
+        });
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || "محاسبه برنامه انجام نشد.");
+        }
+        const plan = await response.json();
+        rows.replaceChildren();
+        for (const slot of plan.slots) {
+          const row = document.createElement("tr");
+          addCell(row, String(slot.number));
+          addCell(row, slot.time);
+          rows.appendChild(row);
+        }
+        $("batch-plan-count").textContent = String(plan.count);
+        $("batch-plan-first").textContent = plan.first;
+        $("batch-plan-last").textContent = plan.last;
+        resultBox.hidden = false;
+      } catch (error) {
+        showError(error && error.message ? error.message : "خطا در محاسبه برنامه.");
+      } finally {
+        button.disabled = false;
+        button.textContent = "محاسبه نوبت‌ها";
+      }
+    });
+    for (const field of [targetField, leadField, intervalField]) {
+      field.addEventListener("input", clearResult);
+      field.addEventListener("change", clearResult);
+    }
+  })();
 </script></body></html>`))
 
 func main() {
@@ -926,6 +1042,26 @@ func main() {
 			UnixMillis int64 `json:"unix_millis"`
 			Timezone   string `json:"timezone"`
 		}{UnixMillis: time.Now().In(tehran()).UnixMilli(), Timezone: "Asia/Tehran"})
+	})
+	mux.HandleFunc("GET /api/order-plan", func(w http.ResponseWriter, r *http.Request) {
+		parseMillis := func(key string) (int64, error) {
+			return strconv.ParseInt(r.URL.Query().Get(key), 10, 64)
+		}
+		targetMS, targetErr := parseMillis("target_ms")
+		leadMS, leadErr := parseMillis("lead_ms")
+		intervalMS, intervalErr := parseMillis("interval_ms")
+		if targetErr != nil || leadErr != nil || intervalErr != nil {
+			http.Error(w, "پارامترهای زمان‌بندی نامعتبر هستند", http.StatusBadRequest)
+			return
+		}
+		plan, err := buildOrderPlan(targetMS, leadMS, intervalMS)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(plan)
 	})
 	mux.HandleFunc("GET /api/calendar", func(w http.ResponseWriter, r *http.Request) {
 		year, errY := strconv.Atoi(r.URL.Query().Get("year"))
