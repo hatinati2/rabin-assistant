@@ -918,14 +918,6 @@ th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
       if (hour > 23 || minute > 59 || second > 59) return null;
       return ((hour * 60 + minute) * 60 + second) * 1000 + millis;
     }
-      const minute = Math.floor(value / 60000) % 60;
-      const second = Math.floor(value / 1000) % 60;
-      const millis = value % 1000;
-      return String(hour).padStart(2, "0") + ":" +
-        String(minute).padStart(2, "0") + ":" +
-        String(second).padStart(2, "0") + "." +
-        String(millis).padStart(3, "0");
-    }
     function addCell(row, text) {
       const cell = document.createElement("td");
       cell.textContent = text;
