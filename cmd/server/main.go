@@ -1131,7 +1131,9 @@ func main() {
 		defer ticker.Stop()
 		for now := range ticker.C {
 			now = now.In(tehran())
-			autoLogin.Prepare(store, credentials, now)
+			if rabinOrderAPICapable() {
+				autoLogin.Prepare(store, credentials, now)
+			}
 			if err := store.markDue(now); err != nil {
 				log.Printf("scheduler: %v", err)
 			}
