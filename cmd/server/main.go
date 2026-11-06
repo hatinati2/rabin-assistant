@@ -909,7 +909,7 @@ th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
       errorBox.hidden = false;
     }
     function parseClockMilliseconds(value) {
-      const match = String(value || "").match(/^(\\d{2}):(\\d{2})(?::(\\d{2})(?:\\.(\\d{1,3}))?)?$/);
+      const match = String(value || "").match(/^(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/);
       if (!match) return null;
       const hour = Number(match[1]);
       const minute = Number(match[2]);
@@ -918,8 +918,6 @@ th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
       if (hour > 23 || minute > 59 || second > 59) return null;
       return ((hour * 60 + minute) * 60 + second) * 1000 + millis;
     }
-    function formatTime(value) {
-      const hour = Math.floor(value / 3600000);
       const minute = Math.floor(value / 60000) % 60;
       const second = Math.floor(value / 1000) % 60;
       const millis = value % 1000;
