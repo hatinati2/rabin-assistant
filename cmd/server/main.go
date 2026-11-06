@@ -442,7 +442,7 @@ var page = template.Must(template.New("page").Funcs(template.FuncMap{
 .wrap{max-width:1400px;margin:18px auto;padding:0 16px}.head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}
 h1{font-size:20px;margin:0}.muted,.foot{color:#667085}.tag{background:#eef4ff;color:#1849a9;border-radius:18px;padding:7px 10px;font-size:12px}
 .nav{display:flex;gap:7px;flex-wrap:wrap}.nav a{display:inline-block;padding:7px 10px;border:1px solid #d0d5dd;border-radius:9px;color:#344054;text-decoration:none;background:#fff}.nav a.active{background:#175cd3;color:#fff;border-color:#175cd3}
-.note,.msg{padding:9px 11px;border-radius:9px;margin:8px 0;line-height:1.65}.note{background:#fffaeb;border:1px solid #fedf89;color:#93370d}
+.note,.msg{padding:9px 11px;border-radius:9px;margin:8px 0;line-height:1.65}.note{background:#fffaeb;border:1px solid #fedf89;color:#93370d;font-size:11px;line-height:1.45;padding:6px 9px;margin:6px 0}
 .msg{background:#ecfdf3;color:#05603a}.err{background:#fef3f2;color:#b42318}
 .grid{display:grid;grid-template-columns:minmax(480px,520px) minmax(0,1fr);gap:14px;align-items:start}.grid.history{grid-template-columns:1fr}.card{background:white;border:1px solid #e4e7ec;border-radius:13px;padding:13px;min-width:0}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 12px}.form-field{min-width:0}.form-field label{margin:4px 0;font-size:12px}.form-field.wide,.form-grid>.wide{grid-column:1/-1}.form-field .foot{margin-top:4px}.form-field .server-clock{margin:4px 0;min-height:58px}
 h2{font-size:15px;margin:0 0 9px}label{display:block;margin:8px 0 4px;font-weight:bold}
