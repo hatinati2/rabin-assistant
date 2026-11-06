@@ -1120,6 +1120,7 @@ func main() {
 	}
 
 	credentials := NewRabinCredentialStore(dataDir, env("RABIN_CREDENTIALS_KEY_FILE", "/etc/rabin-assistant.key"))
+	autoLogin := &RabinAutoLogin{}
 	symbolCatalog := NewMarketSymbolCatalog(filepath.Join(dataDir, "symbols.json"))
 	startMarketSymbolRefresh(symbolCatalog, TSESymbolClient{})
 	if err := store.recoverInterruptedAPIOrders(time.Now().In(tehran())); err != nil {
@@ -1130,10 +1131,11 @@ func main() {
 		defer ticker.Stop()
 		for now := range ticker.C {
 			now = now.In(tehran())
+			autoLogin.Prepare(store, credentials, now)
 			if err := store.markDue(now); err != nil {
 				log.Printf("scheduler: %v", err)
 			}
-			if rabinOrderAPICapable() {
+			if rabinOrderAPICapable() && autoLogin.IsReady() {
 				dispatchReadyRabinOrders(store, credentials, now)
 			}
 		}
@@ -1291,6 +1293,7 @@ func main() {
 			credentials.Render(w, "ورود موفق بود، اما ذخیره امن نشست انجام نشد.", "")
 			return
 		}
+		autoLogin.MarkManualLoginSuccess(store, time.Now().In(tehran()))
 		http.Redirect(w, r, "/settings?notice=rabin_login_ok", http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /history", func(w http.ResponseWriter, r *http.Request) {
