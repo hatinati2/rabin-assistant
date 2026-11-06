@@ -86,3 +86,42 @@ func TestStoreAddManyRejectsDuplicateIDWithoutPartialWrite(t *testing.T) {
 		t.Fatalf("partial batch was written: %+v", got)
 	}
 }
+
+func TestStoreCancelAllScheduledPreservesNonScheduledOrders(t *testing.T) {
+	store, err := newStore(filepath.Join(t.TempDir(), "orders.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().In(tehran())
+	orders := []Order{
+		{ID: "scheduled-manual", ExecutionMode: executionModeManual, Status: statusScheduled, CreatedAt: now, UpdatedAt: now},
+		{ID: "scheduled-api", ExecutionMode: executionModeAPI, Status: statusScheduled, CreatedAt: now, UpdatedAt: now},
+		{ID: "ready", ExecutionMode: executionModeManual, Status: statusReady, CreatedAt: now, UpdatedAt: now},
+		{ID: "submitted", ExecutionMode: executionModeAPI, Status: statusSubmitted, CreatedAt: now, UpdatedAt: now},
+	}
+	if err := store.addMany(orders); err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err := store.cancelAllScheduled(now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled != 2 {
+		t.Fatalf("cancelled count = %d, want 2", cancelled)
+	}
+	got := store.snapshot()
+	statuses := make(map[string]string, len(got))
+	for _, order := range got {
+		statuses[order.ID] = order.Status
+	}
+	if statuses["scheduled-manual"] != statusCancelled || statuses["scheduled-api"] != statusCancelled {
+		t.Fatalf("scheduled orders were not cancelled: %+v", statuses)
+	}
+	if statuses["ready"] != statusReady || statuses["submitted"] != statusSubmitted {
+		t.Fatalf("non-scheduled orders must be preserved: %+v", statuses)
+	}
+	if cancelled, err := store.cancelAllScheduled(now.Add(2 * time.Second)); err != nil || cancelled != 0 {
+		t.Fatalf("second cancellation should be a no-op, count=%d err=%v", cancelled, err)
+	}
+}
+
