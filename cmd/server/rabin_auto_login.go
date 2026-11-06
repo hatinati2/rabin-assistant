@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -51,13 +52,13 @@ func (m *RabinAutoLogin) Prepare(store *Store, credentials *RabinCredentialStore
 	generation := m.generation
 	m.mu.Unlock()
 
-	go m.login(store, credentials, now, generation)
+	go m.login(store, credentials, generation)
 }
 
-func (m *RabinAutoLogin) login(store *Store, credentials *RabinCredentialStore, startedAt time.Time, generation uint64) {
+func (m *RabinAutoLogin) login(store *Store, credentials *RabinCredentialStore, generation uint64) {
 	username, password, err := credentials.Load()
 	if err == nil && (username == "" || password == "") {
-		err = context.Canceled
+		err = errors.New("اطلاعات ورود رابین ذخیره نشده است")
 	}
 	var token string
 	if err == nil {
@@ -86,8 +87,8 @@ func (m *RabinAutoLogin) login(store *Store, credentials *RabinCredentialStore, 
 	now := time.Now().In(tehran())
 	if err != nil {
 		m.blocked = true
-		store.setAPIAuthMessage("ورود خودکار رابین پس از دو تلاش ناموفق بود؛ سفارش ارسال نمی‌شود. برای ادامه، از صفحه اتصال به رابین دستی وارد شوید.", now)
-		log.Printf("rabin auto-login: stopped after two failed attempts; API orders remain queued")
+		store.setAPIAuthMessage("ورود خودکار رابین ناموفق بود؛ پس از حداکثر دو تلاش، سفارش ارسال نمی‌شود. برای ادامه، از صفحه اتصال به رابین دستی وارد شوید.", now)
+		log.Printf("rabin auto-login: stopped after at most two attempts; API orders remain queued")
 		return
 	}
 	m.ready = true
