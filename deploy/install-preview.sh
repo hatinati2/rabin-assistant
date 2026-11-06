@@ -73,6 +73,7 @@ set_env RABIN_ADDR "0.0.0.0:$PORT"
 set_env RABIN_DATA_DIR "$DATA"
 set_env RABIN_CREDENTIALS_KEY_FILE "$KEY"
 set_env RABIN_ENABLE_LIVE_ORDER_SUBMISSION "false"
+set_env RABIN_PREVIEW_MODE "true"
 chmod 600 "$CONF"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
