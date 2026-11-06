@@ -61,8 +61,8 @@ fi
 
 set_env() {
   local key="$1" value="$2"
-  if grep -q "^\${key}=" "$CONF"; then
-    sed -i "s|^\${key}=.*|\${key}=\${value}|" "$CONF"
+  if grep -q "^${key}=" "$CONF"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$CONF"
   else
     printf '%s=%s\n' "$key" "$value" >> "$CONF"
   fi
@@ -88,34 +88,7 @@ echo 'کامپایل نسخه آزمایشی...'
 go build -trimpath -ldflags='-s -w' -o "$APP/rabin-assistant" ./cmd/server
 chmod 0755 "$APP/rabin-assistant"
 
-cat > "/etc/systemd/system/$UNIT" <<'UNIT_FILE'
-[Unit]
-Description=Rabin Assistant PREVIEW on port 8099
-After=network.target
-
-[Service]
-Type=simple
-User=rabin-assistant-preview
-Group=rabin-assistant-preview
-WorkingDirectory=/opt/rabin-assistant-preview
-EnvironmentFile=/etc/rabin-assistant-preview.env
-ExecStart=/opt/rabin-assistant-preview/rabin-assistant
-Restart=on-failure
-RestartSec=3
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-ReadWritePaths=/var/lib/rabin-assistant-preview
-LockPersonality=true
-MemoryDenyWriteExecute=true
-
-[Install]
-WantedBy=multi-user.target
-UNIT_FILE
+install -m 0644 "$SCRIPT_DIR/rabin-assistant-preview.service" "/etc/systemd/system/$UNIT"
 
 systemctl daemon-reload
 systemctl enable "$UNIT"
