@@ -436,6 +436,7 @@ type PageData struct {
 	History              bool
 	APIAvailable         bool
 	PreviewMode          bool
+	HasScheduledOrders   bool
 	Symbols              []MarketSymbol
 	SymbolCatalogStatus  string
 }
@@ -536,7 +537,7 @@ th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.tablewrap tbody td{fon
 </div></details>
 <button class="submit wide" type="submit">ذخیره سفارش</button></div></form>
 <div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود. در مسیر API، ISIN دقیق نماد الزامی است.</div></section>{{end}}
-<section class="card"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><h2 style="margin:0">{{if .History}}تاریخچه سفارش‌ها{{else}}سفارش‌های فعال{{end}} ({{len .Orders}})</h2>{{if .History}}<form method="post" action="/history/clear" onsubmit="return confirm('تمام موارد تاریخچه برای همیشه پاک شوند؟ سفارش‌های زمان‌بندی‌شده فعال دست‌نخورده می‌مانند.')"><button type="submit" class="cancel">پاک کردن تاریخچه</button></form>{{else if and .PreviewMode (gt (len .Orders) 0)}}<form method="post" action="/orders/cancel-all" onsubmit="return confirm('تمام سفارش‌های زمان‌بندی‌شده فعال لغو شوند؟ این عملیات قابل بازگشت نیست.')"><button type="submit" class="cancel">لغو همه</button></form>{{end}}</div><div class="tablewrap"><table>
+<section class="card"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><h2 style="margin:0">{{if .History}}تاریخچه سفارش‌ها{{else}}سفارش‌های فعال{{end}} ({{len .Orders}})</h2>{{if .History}}<form method="post" action="/history/clear" onsubmit="return confirm('تمام موارد تاریخچه برای همیشه پاک شوند؟ سفارش‌های زمان‌بندی‌شده فعال دست‌نخورده می‌مانند.')"><button type="submit" class="cancel">پاک کردن تاریخچه</button></form>{{else if .HasScheduledOrders}}<form method="post" action="/orders/cancel-all" onsubmit="return confirm('تمام سفارش‌های زمان‌بندی‌شده لغو شوند؟ سفارش‌های آماده ارسال، درحال ارسال و ثبت‌شده دست‌نخورده می‌مانند. این عملیات قابل بازگشت نیست.')"><button type="submit" class="cancel">لغو همه</button></form>{{end}}</div><div class="tablewrap"><table>
 <thead><tr><th>نماد</th><th>نوع</th><th>قیمت</th><th>تعداد</th><th>زمان تهران</th><th>مسیر</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>
 {{range .Orders}}<tr><td><b>{{.Symbol}}</b>{{if .ISIN}}<div class="foot">{{.ISIN}}</div>{{end}}</td><td>{{if eq .Side "buy"}}<span class="buy">خرید</span>{{else}}<span class="sell">فروش</span>{{end}}</td>
 <td>{{.Price}}</td><td>{{.Quantity}}</td><td>{{jalali .ExecuteAt}}</td><td>{{executionMode .ExecutionMode}}</td>
@@ -1193,11 +1194,18 @@ func main() {
 		}
 		year, month, day := currentJalaliParts(now)
 		orders := store.activeSnapshot()
+		hasScheduledOrders := false
+		for _, order := range orders {
+			if order.Status == statusScheduled {
+				hasScheduledOrders = true
+				break
+			}
+		}
 		if history {
 			orders = store.historySnapshot()
 		}
 		symbols, catalogStatus := marketSymbolCatalogStatus(symbolCatalog)
-		data := PageData{Orders: orders, Now: formatJalaliDateTime(now), JYear: year, JMonth: month, JDay: day, History: history, APIAvailable: rabinOrderAPICapable(), PreviewMode: strings.EqualFold(env("RABIN_PREVIEW_MODE", "false"), "true"), Symbols: symbols, SymbolCatalogStatus: catalogStatus}
+		data := PageData{Orders: orders, Now: formatJalaliDateTime(now), JYear: year, JMonth: month, JDay: day, History: history, APIAvailable: rabinOrderAPICapable(), PreviewMode: strings.EqualFold(env("RABIN_PREVIEW_MODE", "false"), "true"), HasScheduledOrders: !history && hasScheduledOrders, Symbols: symbols, SymbolCatalogStatus: catalogStatus}
 		switch r.URL.Query().Get("notice") {
 		case "saved":
 			data.Notice = "سفارش ذخیره شد."
@@ -1310,10 +1318,6 @@ func main() {
 	mux.HandleFunc("POST /orders/cancel-all", func(w http.ResponseWriter, r *http.Request) {
 		if !sameOrigin(r) {
 			http.Error(w, "درخواست نامعتبر", http.StatusForbidden)
-			return
-		}
-		if !strings.EqualFold(env("RABIN_PREVIEW_MODE", "false"), "true") {
-			http.Error(w, "لغو گروهی فقط در نسخه آزمایشی فعال است", http.StatusForbidden)
 			return
 		}
 		count, err := store.cancelAllScheduled(time.Now().In(tehran()))
@@ -1475,7 +1479,14 @@ func main() {
 func renderError(w http.ResponseWriter, store *Store, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = page.Execute(w, PageData{
-		Orders: store.snapshot(), Error: message,
+		Orders: store.snapshot(), Error: message, HasScheduledOrders: func() bool {
+			for _, order := range store.snapshot() {
+				if order.Status == statusScheduled {
+					return true
+				}
+			}
+			return false
+		}(),
 		Now: formatJalaliDateTime(time.Now().In(tehran())),
 		JYear: func() int { y, _, _ := currentJalaliParts(time.Now().In(tehran())); return y }(),
 		JMonth: func() int { _, m, _ := currentJalaliParts(time.Now().In(tehran())); return m }(),

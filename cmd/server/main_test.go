@@ -215,6 +215,51 @@ func TestSameOriginRejectsCrossSiteRequests(t *testing.T) {
 	}
 }
 
+
+func TestCancelAllScheduledOnlyCancelsScheduledOrdersAtomically(t *testing.T) {
+	path := t.TempDir() + "/orders.json"
+	store, err := newStore(path)
+	if err != nil {
+		t.Fatalf("newStore: %v", err)
+	}
+	now := time.Date(2026, time.November, 6, 9, 0, 0, 0, tehran())
+	store.orders = []Order{
+		{ID: "scheduled-manual", Status: statusScheduled, UpdatedAt: now.Add(-time.Minute)},
+		{ID: "scheduled-api", Status: statusScheduled, ExecutionMode: executionModeAPI, UpdatedAt: now.Add(-time.Minute)},
+		{ID: "ready-api", Status: statusReady, ExecutionMode: executionModeAPI},
+		{ID: "submitting", Status: statusSubmitting},
+		{ID: "submitted", Status: statusSubmitted},
+	}
+	if err := store.saveLocked(); err != nil {
+		t.Fatalf("save before cancel: %v", err)
+	}
+	count, err := store.cancelAllScheduled(now)
+	if err != nil {
+		t.Fatalf("cancelAllScheduled: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("cancelled count = %d, want 2", count)
+	}
+	reloaded, err := newStore(path)
+	if err != nil {
+		t.Fatalf("reload store: %v", err)
+	}
+	got := make(map[string]Order, len(reloaded.orders))
+	for _, order := range reloaded.orders {
+		got[order.ID] = order
+	}
+	for _, id := range []string{"scheduled-manual", "scheduled-api"} {
+		if got[id].Status != statusCancelled || !got[id].UpdatedAt.Equal(now) {
+			t.Errorf("%s not cancelled at requested time: %#v", id, got[id])
+		}
+	}
+	for _, id := range []string{"ready-api", "submitting", "submitted"} {
+		if got[id].Status == statusCancelled {
+			t.Errorf("%s must not be cancelled by bulk operation", id)
+		}
+	}
+}
+
 func TestClearHistoryPreservesActiveAndAmbiguousOrders(t *testing.T) {
 	path := t.TempDir() + "/orders.json"
 	store, err := newStore(path)
