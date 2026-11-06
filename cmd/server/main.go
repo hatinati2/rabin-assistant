@@ -1328,10 +1328,6 @@ func main() {
 			http.Error(w, "درخواست نامعتبر", http.StatusForbidden)
 			return
 		}
-		if !strings.EqualFold(env("RABIN_PREVIEW_MODE", "false"), "true") {
-			http.Error(w, "ساخت دسته‌ای سفارش فقط در نسخه آزمایشی فعال است", http.StatusForbidden)
-			return
-		}
 		r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "فرم نامعتبر است یا حجم آن بیش از حد مجاز است", http.StatusBadRequest)
@@ -1347,7 +1343,7 @@ func main() {
 		}
 		if executionMode == executionModeAPI {
 			if !rabinOrderAPICapable() {
-				http.Error(w, "ارسال API در نسخه آزمایشی فعال نیست؛ مجوز اختصاصی را بررسی کن", http.StatusForbidden)
+				http.Error(w, "ارسال API در تنظیمات سرور فعال نیست؛ مجوز و پیکربندی را بررسی کن", http.StatusForbidden)
 				return
 			}
 			token, _, tokenErr := credentials.LoadAccessToken()
