@@ -214,6 +214,31 @@ func (s *Store) cancel(id string) error {
 	return errors.New("سفارش پیدا نشد")
 }
 
+// cancelAllScheduled cancels every scheduled order in one atomic store update.
+// Ready, in-flight, submitted, and otherwise terminal orders are deliberately preserved.
+func (s *Store) cancelAllScheduled(now time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := append([]Order(nil), s.orders...)
+	cancelled := 0
+	for i := range s.orders {
+		if s.orders[i].Status != statusScheduled {
+			continue
+		}
+		s.orders[i].Status = statusCancelled
+		s.orders[i].UpdatedAt = now
+		cancelled++
+	}
+	if cancelled == 0 {
+		return 0, nil
+	}
+	if err := s.saveLocked(); err != nil {
+		s.orders = previous
+		return 0, err
+	}
+	return cancelled, nil
+}
+
 func (s *Store) markDue(now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -410,6 +435,7 @@ type PageData struct {
 	JDay          int
 	History              bool
 	APIAvailable         bool
+	PreviewMode          bool
 	Symbols              []MarketSymbol
 	SymbolCatalogStatus  string
 }
@@ -471,7 +497,7 @@ input,select{width:100%;padding:7px 9px;border:1px solid #d0d5dd;border-radius:8
 button{border:0;border-radius:8px;background:#175cd3;color:white;padding:8px 11px;font:inherit;cursor:pointer}
 .submit{width:100%;margin-top:9px}.cancel{background:white;color:#b42318;border:1px solid #fecdca;padding:6px 9px}
 table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{text-align:right;padding:8px 6px;border-bottom:1px solid #eaecf0}
-th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-block;border-radius:16px;padding:4px 7px;font-size:10px}
+th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.tablewrap tbody td{font-size:11.5px}.status{display:inline-block;border-radius:16px;padding:4px 7px;font-size:10px}
 .scheduled{background:#eff8ff;color:#175cd3}.ready{background:#fffaeb;color:#b54708}.cancelled{background:#f2f4f7;color:#475467}
 .buy{color:#067647;font-weight:bold}.sell{color:#b42318;font-weight:bold}.empty{text-align:center;color:#667085;padding:28px}
 .foot{font-size:10px;line-height:1.55;margin-top:6px}
@@ -510,7 +536,7 @@ th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
 </div></details>
 <button class="submit wide" type="submit">ذخیره سفارش</button></div></form>
 <div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود. در مسیر API، ISIN دقیق نماد الزامی است.</div></section>{{end}}
-<section class="card"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><h2 style="margin:0">{{if .History}}تاریخچه سفارش‌ها{{else}}سفارش‌های فعال{{end}} ({{len .Orders}})</h2>{{if .History}}<form method="post" action="/history/clear" onsubmit="return confirm('تمام موارد تاریخچه برای همیشه پاک شوند؟ سفارش‌های زمان‌بندی‌شده فعال دست‌نخورده می‌مانند.')"><button type="submit" class="cancel">پاک کردن تاریخچه</button></form>{{end}}</div><div class="tablewrap"><table>
+<section class="card"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><h2 style="margin:0">{{if .History}}تاریخچه سفارش‌ها{{else}}سفارش‌های فعال{{end}} ({{len .Orders}})</h2>{{if .History}}<form method="post" action="/history/clear" onsubmit="return confirm('تمام موارد تاریخچه برای همیشه پاک شوند؟ سفارش‌های زمان‌بندی‌شده فعال دست‌نخورده می‌مانند.')"><button type="submit" class="cancel">پاک کردن تاریخچه</button></form>{{else if and .PreviewMode (gt (len .Orders) 0)}}<form method="post" action="/orders/cancel-all" onsubmit="return confirm('تمام سفارش‌های زمان‌بندی‌شده فعال لغو شوند؟ این عملیات قابل بازگشت نیست.')"><button type="submit" class="cancel">لغو همه</button></form>{{end}}</div><div class="tablewrap"><table>
 <thead><tr><th>نماد</th><th>نوع</th><th>قیمت</th><th>تعداد</th><th>زمان تهران</th><th>مسیر</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>
 {{range .Orders}}<tr><td><b>{{.Symbol}}</b>{{if .ISIN}}<div class="foot">{{.ISIN}}</div>{{end}}</td><td>{{if eq .Side "buy"}}<span class="buy">خرید</span>{{else}}<span class="sell">فروش</span>{{end}}</td>
 <td>{{.Price}}</td><td>{{.Quantity}}</td><td>{{jalali .ExecuteAt}}</td><td>{{executionMode .ExecutionMode}}</td>
@@ -1147,7 +1173,7 @@ func main() {
 			orders = store.historySnapshot()
 		}
 		symbols, catalogStatus := marketSymbolCatalogStatus(symbolCatalog)
-		data := PageData{Orders: orders, Now: formatJalaliDateTime(now), JYear: year, JMonth: month, JDay: day, History: history, APIAvailable: rabinOrderAPICapable(), Symbols: symbols, SymbolCatalogStatus: catalogStatus}
+		data := PageData{Orders: orders, Now: formatJalaliDateTime(now), JYear: year, JMonth: month, JDay: day, History: history, APIAvailable: rabinOrderAPICapable(), PreviewMode: strings.EqualFold(env("RABIN_PREVIEW_MODE", "false"), "true"), Symbols: symbols, SymbolCatalogStatus: catalogStatus}
 		switch r.URL.Query().Get("notice") {
 		case "saved":
 			data.Notice = "سفارش ذخیره شد."
@@ -1155,6 +1181,9 @@ func main() {
 			data.Notice = "همه سفارش‌های برنامه‌ریزی‌شده به‌صورت مستقل و بدون ارسال به رابین ذخیره شدند."
 		case "cancelled":
 			data.Notice = "سفارش لغو شد."
+		case "all_cancelled":
+			count, _ := strconv.Atoi(r.URL.Query().Get("count"))
+			data.Notice = fmt.Sprintf("%d سفارش زمان‌بندی‌شده لغو شد.", count)
 		case "manual_confirmed":
 			data.Notice = "تأیید دستی ثبت شد. این تأیید به معنی راستی‌آزمایی خودکار کارگزاری نیست."
 		case "history_cleared":
@@ -1248,6 +1277,22 @@ func main() {
 			return
 		}
 		http.Redirect(w, r, "/history?notice=history_cleared", http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /orders/cancel-all", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "درخواست نامعتبر", http.StatusForbidden)
+			return
+		}
+		if !strings.EqualFold(env("RABIN_PREVIEW_MODE", "false"), "true") {
+			http.Error(w, "لغو گروهی فقط در نسخه آزمایشی فعال است", http.StatusForbidden)
+			return
+		}
+		count, err := store.cancelAllScheduled(time.Now().In(tehran()))
+		if err != nil {
+			renderError(w, store, "لغو گروهی سفارش‌ها انجام نشد: "+err.Error())
+			return
+		}
+		http.Redirect(w, r, "/?notice=all_cancelled&count="+strconv.Itoa(count), http.StatusSeeOther)
 	})
 	mux.HandleFunc("POST /orders/batch", func(w http.ResponseWriter, r *http.Request) {
 		if !sameOrigin(r) {
@@ -1395,6 +1440,7 @@ func renderError(w http.ResponseWriter, store *Store, message string) {
 		JMonth: func() int { _, m, _ := currentJalaliParts(time.Now().In(tehran())); return m }(),
 		JDay: func() int { _, _, d := currentJalaliParts(time.Now().In(tehran())); return d }(),
 		APIAvailable: rabinOrderAPICapable(),
+		PreviewMode: strings.EqualFold(env("RABIN_PREVIEW_MODE", "false"), "true"),
 		Symbols: defaultMarketSymbols(),
 		SymbolCatalogStatus: "در صورت عدم دسترسی به منبع، فهرست پشتیبان خودرو نمایش داده می‌شود.",
 	})
