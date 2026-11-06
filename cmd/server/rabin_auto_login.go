@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"strings"
 	"time"
 )
 
@@ -21,6 +22,7 @@ type RabinAutoLogin struct {
 
 func (m *RabinAutoLogin) Prepare(store *Store, credentials *RabinCredentialStore, now time.Time) {
 	var earliest time.Time
+	blockedByOrder := false
 	for _, order := range store.snapshot() {
 		mode := order.ExecutionMode
 		if mode == "" {
@@ -28,6 +30,9 @@ func (m *RabinAutoLogin) Prepare(store *Store, credentials *RabinCredentialStore
 		}
 		if mode != executionModeAPI || (order.Status != statusScheduled && order.Status != statusReady) {
 			continue
+		}
+		if strings.HasPrefix(order.BrokerMessage, "ورود خودکار رابین ناموفق بود") {
+			blockedByOrder = true
 		}
 		if earliest.IsZero() || order.ExecuteAt.Before(earliest) {
 			earliest = order.ExecuteAt
@@ -43,7 +48,21 @@ func (m *RabinAutoLogin) Prepare(store *Store, credentials *RabinCredentialStore
 		m.mu.Unlock()
 		return
 	}
-	if m.ready || m.blocked || m.running || now.Before(earliest.Add(-2*time.Minute)) {
+	if blockedByOrder {
+		m.blocked = true
+		m.mu.Unlock()
+		return
+	}
+	if m.ready || m.blocked || m.running {
+		m.mu.Unlock()
+		return
+	}
+	if token, updatedAt, err := credentials.LoadAccessToken(); err == nil && token != "" && !updatedAt.Before(earliest.Add(-2*time.Minute)) {
+		m.ready = true
+		m.mu.Unlock()
+		return
+	}
+	if now.Before(earliest.Add(-2*time.Minute)) {
 		m.mu.Unlock()
 		return
 	}
