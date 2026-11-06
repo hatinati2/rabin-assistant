@@ -91,6 +91,7 @@ func (s *Store) recoverInterruptedAPIOrders(now time.Time) error {
 		return s.saveLocked()
 	}
 	return nil
+}
 
 func (s *Store) setAPIAuthMessage(message string, now time.Time) {
 	s.mu.Lock()
@@ -116,6 +117,4 @@ func (s *Store) setAPIAuthMessage(message string, now time.Time) {
 			log.Printf("rabin auto-login: could not persist order notice: %v", err)
 		}
 	}
-}
-
 }
