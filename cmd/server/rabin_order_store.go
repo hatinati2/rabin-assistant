@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"log"
 	"time"
 )
 
@@ -90,4 +91,30 @@ func (s *Store) recoverInterruptedAPIOrders(now time.Time) error {
 		return s.saveLocked()
 	}
 	return nil
+}
+
+func (s *Store) setAPIAuthMessage(message string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := append([]Order(nil), s.orders...)
+	changed := false
+	for i := range s.orders {
+		order := &s.orders[i]
+		mode := order.ExecutionMode
+		if mode == "" {
+			mode = executionModeManual
+		}
+		if mode != executionModeAPI || (order.Status != statusScheduled && order.Status != statusReady) || order.BrokerMessage == message {
+			continue
+		}
+		order.BrokerMessage = message
+		order.UpdatedAt = now
+		changed = true
+	}
+	if changed {
+		if err := s.saveLocked(); err != nil {
+			s.orders = previous
+			log.Printf("rabin auto-login: could not persist order notice: %v", err)
+		}
+	}
 }
