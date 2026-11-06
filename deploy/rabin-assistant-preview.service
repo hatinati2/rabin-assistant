@@ -1,0 +1,26 @@
+[Unit]
+Description=Rabin Assistant PREVIEW on port 8099
+After=network.target
+
+[Service]
+Type=simple
+User=rabin-assistant-preview
+Group=rabin-assistant-preview
+WorkingDirectory=/opt/rabin-assistant-preview
+EnvironmentFile=/etc/rabin-assistant-preview.env
+ExecStart=/opt/rabin-assistant-preview/rabin-assistant
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/rabin-assistant-preview
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

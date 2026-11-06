@@ -105,11 +105,32 @@ func (s *Store) activeSnapshot() []Order  { return s.list(false) }
 func (s *Store) historySnapshot() []Order { return s.list(true) }
 
 func (s *Store) add(order Order) error {
+	return s.addMany([]Order{order})
+}
+
+func (s *Store) addMany(orders []Order) error {
+	if len(orders) == 0 {
+		return errors.New("هیچ سفارشی برای ثبت وجود ندارد")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.orders = append(s.orders, order)
+	previous := s.orders
+	ids := make(map[string]struct{}, len(previous)+len(orders))
+	for _, existing := range previous {
+		ids[existing.ID] = struct{}{}
+	}
+	for _, order := range orders {
+		if order.ID == "" {
+			return errors.New("شناسه سفارش خالی است")
+		}
+		if _, exists := ids[order.ID]; exists {
+			return errors.New("شناسه تکراری در فهرست سفارش‌ها وجود دارد")
+		}
+		ids[order.ID] = struct{}{}
+	}
+	s.orders = append(append([]Order(nil), previous...), orders...)
 	if err := s.saveLocked(); err != nil {
-		s.orders = s.orders[:len(s.orders)-1]
+		s.orders = previous
 		return err
 	}
 	return nil
@@ -191,6 +212,31 @@ func (s *Store) cancel(id string) error {
 		return nil
 	}
 	return errors.New("سفارش پیدا نشد")
+}
+
+// cancelAllScheduled cancels every scheduled order in one atomic store update.
+// Ready, in-flight, submitted, and otherwise terminal orders are deliberately preserved.
+func (s *Store) cancelAllScheduled(now time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := append([]Order(nil), s.orders...)
+	cancelled := 0
+	for i := range s.orders {
+		if s.orders[i].Status != statusScheduled {
+			continue
+		}
+		s.orders[i].Status = statusCancelled
+		s.orders[i].UpdatedAt = now
+		cancelled++
+	}
+	if cancelled == 0 {
+		return 0, nil
+	}
+	if err := s.saveLocked(); err != nil {
+		s.orders = previous
+		return 0, err
+	}
+	return cancelled, nil
 }
 
 func (s *Store) markDue(now time.Time) error {
@@ -389,6 +435,7 @@ type PageData struct {
 	JDay          int
 	History              bool
 	APIAvailable         bool
+	PreviewMode          bool
 	Symbols              []MarketSymbol
 	SymbolCatalogStatus  string
 }
@@ -438,57 +485,58 @@ var page = template.Must(template.New("page").Funcs(template.FuncMap{
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>دستیار رابین</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#f4f6fa;color:#182230;font:14px Tahoma,Arial}
-.wrap{max-width:1100px;margin:30px auto;padding:0 16px}.head{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:18px}
-h1{font-size:22px;margin:0}.muted,.foot{color:#667085}.tag{background:#eef4ff;color:#1849a9;border-radius:18px;padding:7px 10px;font-size:12px}
-.nav{display:flex;gap:7px;flex-wrap:wrap}.nav a{display:inline-block;padding:9px 12px;border:1px solid #d0d5dd;border-radius:9px;color:#344054;text-decoration:none;background:#fff}.nav a.active{background:#175cd3;color:#fff;border-color:#175cd3}
-.note,.msg{padding:12px;border-radius:9px;margin:12px 0;line-height:1.8}.note{background:#fffaeb;border:1px solid #fedf89;color:#93370d}
+*{box-sizing:border-box}body{margin:0;background:#f4f6fa;color:#182230;font:12.5px Tahoma,Arial}
+.wrap{max-width:1400px;margin:18px auto;padding:0 16px}.head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}
+h1{font-size:19px;margin:0}.muted,.foot{color:#667085}.tag{background:#eef4ff;color:#1849a9;border-radius:18px;padding:7px 10px;font-size:11px}
+.nav{display:flex;gap:7px;flex-wrap:wrap}.nav a{display:inline-block;padding:7px 10px;border:1px solid #d0d5dd;border-radius:9px;color:#344054;text-decoration:none;background:#fff}.nav a.active{background:#175cd3;color:#fff;border-color:#175cd3}
+.note,.msg{padding:9px 11px;border-radius:9px;margin:8px 0;line-height:1.65}.note{background:#fffaeb;border:1px solid #fedf89;color:#93370d;font-size:11px;line-height:1.45;padding:6px 9px;margin:6px 0}
 .msg{background:#ecfdf3;color:#05603a}.err{background:#fef3f2;color:#b42318}
-.grid{display:grid;grid-template-columns:320px 1fr;gap:16px}.grid.history{grid-template-columns:1fr}.card{background:white;border:1px solid #e4e7ec;border-radius:13px;padding:17px;min-width:0}
-h2{font-size:16px;margin:0 0 14px}label{display:block;margin:12px 0 6px;font-weight:bold}
-input,select{width:100%;padding:10px;border:1px solid #d0d5dd;border-radius:8px;font:inherit}
-button{border:0;border-radius:8px;background:#175cd3;color:white;padding:10px 13px;font:inherit;cursor:pointer}
-.submit{width:100%;margin-top:15px}.cancel{background:white;color:#b42318;border:1px solid #fecdca;padding:6px 9px}
-table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{text-align:right;padding:10px 7px;border-bottom:1px solid #eaecf0}
-th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-block;border-radius:16px;padding:5px 8px;font-size:11px}
+.grid{display:grid;grid-template-columns:minmax(480px,520px) minmax(0,1fr);gap:14px;align-items:start}.grid.history{grid-template-columns:1fr}.card{background:white;border:1px solid #e4e7ec;border-radius:13px;padding:13px;min-width:0}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 12px}.form-field{min-width:0}.form-field label{margin:4px 0;font-size:11px}.form-field.wide,.form-grid>.wide{grid-column:1/-1}.form-field .foot{margin-top:4px}.form-field .server-clock{margin:4px 0;min-height:58px}
+h2{font-size:14px;margin:0 0 9px}label{display:block;margin:8px 0 4px;font-weight:bold}
+input,select{width:100%;padding:7px 9px;border:1px solid #d0d5dd;border-radius:8px;font:inherit;min-height:36px}
+button{border:0;border-radius:8px;background:#175cd3;color:white;padding:8px 11px;font:inherit;cursor:pointer}
+.submit{width:100%;margin-top:9px}.cancel{background:white;color:#b42318;border:1px solid #fecdca;padding:6px 9px}
+table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{text-align:right;padding:8px 6px;border-bottom:1px solid #eaecf0}
+th{font-size:10px;color:#667085}.tablewrap{overflow:auto}.tablewrap tbody td{font-size:11.5px}.status{display:inline-block;border-radius:16px;padding:4px 7px;font-size:10px}
 .scheduled{background:#eff8ff;color:#175cd3}.ready{background:#fffaeb;color:#b54708}.cancelled{background:#f2f4f7;color:#475467}
 .buy{color:#067647;font-weight:bold}.sell{color:#b42318;font-weight:bold}.empty{text-align:center;color:#667085;padding:28px}
-.foot{font-size:12px;line-height:1.8;margin-top:12px}
-.server-clock{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 16px;padding:13px 16px;background:#fff;border:1px solid #d0d5dd;border-radius:12px}.server-clock-label{color:#667085;font-size:13px}.server-clock-value{font:700 25px Tahoma,Arial;direction:ltr;font-variant-numeric:tabular-nums;letter-spacing:1px;color:#175cd3}.server-clock-status{font-size:11px;color:#667085}@media(max-width:480px){.server-clock{align-items:flex-start;flex-direction:column}.server-clock-value{font-size:23px}}
+.foot{font-size:10px;line-height:1.55;margin-top:6px}
+.server-clock{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0;padding:8px 11px;background:#fff;border:1px solid #d0d5dd;border-radius:12px}.server-clock-label{color:#667085;font-size:10px}.server-clock-value{font:700 22px Tahoma,Arial;direction:ltr;font-variant-numeric:tabular-nums;letter-spacing:1px;color:#175cd3}.server-clock-status{font-size:9px;color:#667085}@media(max-width:480px){.server-clock{align-items:flex-start;flex-direction:column}.server-clock-value{font-size:23px}}
 .symbol-suggestions{margin-top:5px;border:1px solid #d0d5dd;border-radius:9px;background:#fff;max-height:280px;overflow:auto;box-shadow:0 8px 20px rgba(16,24,40,.10)}
 .symbol-suggestions[hidden]{display:none}
 .symbol-suggestion{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:10px 12px;border:0;border-radius:0;border-bottom:1px solid #eaecf0;background:#fff;color:#182230;text-align:right;cursor:pointer}
 .symbol-suggestion:last-child{border-bottom:0}.symbol-suggestion:hover,.symbol-suggestion:focus{background:#eff8ff;outline:none}
-.symbol-suggestion-main{display:flex;flex-direction:column;gap:4px;min-width:0}.symbol-suggestion-name{font-weight:bold}.symbol-suggestion-company{font-size:12px;color:#667085;white-space:normal}.symbol-suggestion-isin{direction:ltr;font-size:11px;color:#475467;white-space:nowrap}
-.datebox{position:relative}.datebar{display:flex;gap:8px}.datebar input{flex:1}.datebar button{white-space:nowrap}.calendar{margin-top:8px;padding:12px;border:1px solid #d0d5dd;border-radius:10px;background:#fff}.cal-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}.cal-nav{background:#f2f4f7;color:#344054;padding:7px 10px}.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;text-align:center}.cal-grid span{padding:7px 0;color:#667085;font-size:12px}.cal-day{background:#f8fafc;color:#182230;padding:9px 2px;border-radius:7px}.cal-day:hover,.cal-day.selected{background:#175cd3;color:#fff}.cal-day.today{outline:2px solid #84adff}.cal-empty{min-height:34px}
-@media(max-width:800px){.grid{grid-template-columns:1fr}.head{align-items:flex-start;gap:10px;flex-direction:column}}
+.symbol-suggestion-main{display:flex;flex-direction:column;gap:4px;min-width:0}.symbol-suggestion-name{font-weight:bold}.symbol-suggestion-company{font-size:11px;color:#667085;white-space:normal}.symbol-suggestion-isin{direction:ltr;font-size:10px;color:#475467;white-space:nowrap}
+.datebox{position:relative}.datebar{display:flex;gap:8px}.datebar input{flex:1}.datebar button{white-space:nowrap}.calendar{margin-top:8px;padding:12px;border:1px solid #d0d5dd;border-radius:10px;background:#fff}.cal-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}.cal-nav{background:#f2f4f7;color:#344054;padding:7px 10px}.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;text-align:center}.cal-grid span{padding:7px 0;color:#667085;font-size:11px}.cal-day{background:#f8fafc;color:#182230;padding:9px 2px;border-radius:7px}.cal-day:hover,.cal-day.selected{background:#175cd3;color:#fff}.cal-day.today{outline:2px solid #84adff}.cal-empty{min-height:34px}
+.batch-planner{grid-column:1/-1;margin:4px 0;border:1px solid #d0d5dd;border-radius:9px;padding:7px 9px;background:#f8fafc}.batch-planner>summary{cursor:pointer;font-size:11px;font-weight:bold;color:#344054}.batch-planner-body{padding-top:7px}.batch-planner-note{font-size:10px;line-height:1.55;color:#667085;margin-bottom:6px}.batch-plan-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px}.batch-plan-controls label{font-size:10px;margin:4px 0}.batch-plan-controls input{min-height:32px;padding:5px 8px;font-size:12px}.batch-plan-calc{margin-top:7px;font-size:11px;padding:7px 10px}.batch-plan-error{margin-top:6px;color:#b42318;font-size:10px}.batch-plan-result{margin-top:7px;padding:7px;background:#fff;border:1px solid #e4e7ec;border-radius:8px}.batch-plan-summary{display:flex;gap:10px;flex-wrap:wrap;font-size:10px}.batch-plan-table-wrap{max-height:140px;overflow:auto;margin-top:6px}.batch-plan-table{font-size:10px}.batch-plan-table th,.batch-plan-table td{padding:4px 6px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.head{align-items:flex-start;gap:10px;flex-direction:column}}@media(max-width:560px){.form-grid{grid-template-columns:1fr}.form-field.wide,.form-grid>.wide{grid-column:auto}.batch-plan-controls{grid-template-columns:1fr}}
 </style></head><body data-jyear="{{.JYear}}" data-jmonth="{{.JMonth}}" data-jday="{{.JDay}}"><main class="wrap">
 <div class="head"><div><h1>دستیار رابین</h1><div class="muted" style="margin-top:7px">مدیریت سفارش‌ها · ساعت تهران</div></div><div class="nav"><a class="{{if not .History}}active{{end}}" href="/">سفارش‌های فعال</a><a class="{{if .History}}active{{end}}" href="/history">تاریخچه</a><a href="/settings">اتصال به رابین</a></div><span class="tag">{{if .APIAvailable}}ارسال واقعی API فعال است{{else}}ارسال واقعی API غیرفعال است{{end}}</span></div>
 <div class="note"><b>دو مسیر اجرا:</b> مسیر «بدون API» سفارش را برای ثبت دستی آماده می‌کند. مسیر «با API» فقط در صورت فعال‌سازی صریح در تنظیمات سرور، وجود نشست معتبر و ثبت ISIN، در زمان مقرر یک درخواست سفارش عادی به رابین ارسال می‌کند. در صورت نامشخص بودن نتیجه ارسال، سیستم سفارش را خودکار تکرار نمی‌کند.</div>
 {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="msg">{{.Notice}}</div>{{end}}
 <div class="grid{{if .History}} history{{end}}">{{if not .History}}<section class="card"><h2>تعریف سفارش</h2>
-<form id="order-form" method="post" action="/orders"><label>مسیر ثبت سفارش</label><select id="execution-mode" name="execution_mode"><option value="manual" selected>بدون API — ثبت دستی در رابین</option><option value="api" {{if not .APIAvailable}}disabled{{end}}>با API — ارسال عادی به رابین</option></select>
-<label>انتخاب نماد از فهرست</label><select id="symbol-preset"><option value="">انتخاب نماد (اختیاری)</option>{{range .Symbols}}<option value="{{.Symbol}}" data-isin="{{.ISIN}}">{{.Symbol}}{{if .CompanyName}} — {{.CompanyName}}{{end}}{{if .MarketType}} ({{.MarketType}}){{end}}</option>{{end}}</select><div class="foot">{{.SymbolCatalogStatus}}</div><label>نماد نمایشی</label><input id="order-symbol" name="symbol" maxlength="24" placeholder="نماد را حرف‌به‌حرف تایپ کن..." autocomplete="off" aria-autocomplete="list" aria-controls="market-symbol-suggestions" aria-expanded="false" required>
-<div id="market-symbol-suggestions" class="symbol-suggestions" role="listbox" aria-label="پیشنهادهای نماد" hidden></div>
-<div id="symbol-lookup-status" class="foot" aria-live="polite">با واردکردن هر حرف، پیشنهاد نمادها نمایش داده می‌شود.</div>
-<label>شناسه ISIN (فقط برای مسیر API)</label><input id="order-isin" name="isin" maxlength="12" minlength="12" pattern="[A-Za-z]{2}[A-Za-z0-9]{9}[0-9]" placeholder="مثلاً IR..." autocomplete="off">
-<label>نوع سفارش</label><select name="side"><option value="buy">خرید</option><option value="sell">فروش</option></select>
-<label>قیمت (ریال)</label><input name="price" type="number" min="1" step="1" required>
-<label>تعداد</label><input name="quantity" type="number" min="1" step="1" required>
-<label>تاریخ شمسی</label>
-<div class="datebox">
-  <div class="datebar"><input id="jalali-date-display" name="execute_at_date" type="text" value="" inputmode="numeric" dir="ltr" placeholder="مثلاً ۱۴۰۵/۰۸/۱۴" pattern="[0-9۰-۹٠-٩]{4}[/.-][0-9۰-۹٠-٩]{1,2}[/.-][0-9۰-۹٠-٩]{1,2}" autocomplete="off" required><button type="button" id="calendar-toggle">تقویم</button></div>
-  <div id="jalali-calendar" class="calendar" hidden>
-    <div class="cal-head"><button type="button" id="cal-prev" class="cal-nav">ماه قبل</button><strong id="cal-title">تقویم شمسی</strong><button type="button" id="cal-next" class="cal-nav">ماه بعد</button></div>
-    <div class="cal-grid" id="cal-weekdays"><span>ش</span><span>ی</span><span>د</span><span>س</span><span>چ</span><span>پ</span><span>ج</span></div>
-    <div class="cal-grid" id="cal-days"></div>
-  </div>
-</div>
-<section class="server-clock" aria-live="off" style="margin-top:12px"><div><div class="server-clock-label">ساعت فعلی سرور (تهران)</div><div class="server-clock-status" id="server-clock-status">در حال دریافت زمان سرور…</div></div><time class="server-clock-value" id="server-clock" dir="ltr">--:--:--.---</time></section>
-<label>ساعت اجرا (تهران، با دقت میلی‌ثانیه)</label><input id="execute-time" name="execute_time" type="time" step="0.001" value="08:44:50.000" required>
-<button class="submit" type="submit">ذخیره سفارش</button></form>
+<form id="order-form" method="post" action="/orders"><div class="form-grid">
+<div class="form-field wide"><label>مسیر ثبت سفارش</label><select id="execution-mode" name="execution_mode"><option value="manual" selected>بدون API — ثبت دستی در رابین</option><option value="api" {{if not .APIAvailable}}disabled{{end}}>با API — ارسال عادی به رابین</option></select></div>
+<div class="form-field"><label>انتخاب نماد از فهرست</label><select id="symbol-preset"><option value="">انتخاب نماد (اختیاری)</option>{{range .Symbols}}<option value="{{.Symbol}}" data-isin="{{.ISIN}}">{{.Symbol}}{{if .CompanyName}} — {{.CompanyName}}{{end}}{{if .MarketType}} ({{.MarketType}}){{end}}</option>{{end}}</select><div class="foot">{{.SymbolCatalogStatus}}</div></div>
+<div class="form-field"><label>نماد نمایشی</label><input id="order-symbol" name="symbol" maxlength="24" placeholder="نماد را حرف‌به‌حرف تایپ کن..." autocomplete="off" aria-autocomplete="list" aria-controls="market-symbol-suggestions" aria-expanded="false" required><div id="market-symbol-suggestions" class="symbol-suggestions" role="listbox" aria-label="پیشنهادهای نماد" hidden></div><div id="symbol-lookup-status" class="foot" aria-live="polite">با واردکردن هر حرف، پیشنهاد نمادها نمایش داده می‌شود.</div></div>
+<div class="form-field wide"><label>شناسه ISIN (فقط برای مسیر API)</label><input id="order-isin" name="isin" maxlength="12" minlength="12" pattern="[A-Za-z]{2}[A-Za-z0-9]{9}[0-9]" placeholder="مثلاً IR..." autocomplete="off"></div>
+<div class="form-field"><label>نوع سفارش</label><select name="side"><option value="buy">خرید</option><option value="sell">فروش</option></select></div>
+<div class="form-field"><label>قیمت (ریال)</label><input name="price" type="number" min="1" step="1" required></div>
+<div class="form-field"><label>تعداد</label><input name="quantity" type="number" min="1" step="1" required></div>
+<div class="form-field"><label>تاریخ شمسی</label><div class="datebox"><div class="datebar"><input id="jalali-date-display" name="execute_at_date" type="text" value="" inputmode="numeric" dir="ltr" placeholder="مثلاً ۱۴۰۵/۰۸/۱۴" pattern="[0-9۰-۹٠-٩]{4}[/.-][0-9۰-۹٠-٩]{1,2}[/.-][0-9۰-۹٠-٩]{1,2}" autocomplete="off" required><button type="button" id="calendar-toggle">تقویم</button></div><div id="jalali-calendar" class="calendar" hidden><div class="cal-head"><button type="button" id="cal-prev" class="cal-nav">ماه قبل</button><strong id="cal-title">تقویم شمسی</strong><button type="button" id="cal-next" class="cal-nav">ماه بعد</button></div><div class="cal-grid" id="cal-weekdays"><span>ش</span><span>ی</span><span>د</span><span>س</span><span>چ</span><span>پ</span><span>ج</span></div><div class="cal-grid" id="cal-days"></div></div></div></div>
+<div class="form-field"><section class="server-clock" aria-live="off"><div><div class="server-clock-label">ساعت تهران</div><div class="server-clock-status" id="server-clock-status">در حال دریافت زمان سرور…</div></div><time class="server-clock-value" id="server-clock" dir="ltr">--:--:--.---</time></section></div>
+<div class="form-field"><label>ساعت اجرا (تهران، با دقت میلی‌ثانیه)</label><input id="execute-time" name="execute_time" type="time" step="0.001" value="08:44:50.000" required></div>
+<details class="batch-planner wide" id="batch-planner"><summary>برنامه‌ریز نوبت‌های سرخطی</summary><div class="batch-planner-body">
+<div class="batch-planner-note">زمان هدف از فیلد «ساعت اجرا» خوانده می‌شود. نوبت‌ها از چند ثانیه قبل شروع می‌شوند و با فاصله تعیین‌شده تا قبل از لحظه هدف ادامه دارند. مسیر انتخاب‌شده در فرم اصلی برای همه سفارش‌ها اعمال می‌شود؛ در مسیر API هر نوبت یک درخواست مستقل به رابین خواهد داشت.</div>
+<div class="batch-plan-controls"><div><label for="batch-lead-seconds">شروع چند ثانیه قبل؟</label><input id="batch-lead-seconds" type="number" min="0.001" max="3600" step="0.001" value="10"></div><div><label for="batch-interval-ms">فاصله بین نوبت‌ها (میلی‌ثانیه)</label><input id="batch-interval-ms" type="number" min="1" max="60000" step="1" value="200"></div><div><label for="batch-quantity-mode">روش تعیین تعداد سهم</label><select id="batch-quantity-mode"><option value="each">تعداد واردشده برای هر سفارش</option><option value="total">تقسیم تعداد کل بین سفارش‌ها</option></select></div><div><label for="batch-order-count">تعداد سفارش‌ها</label><input id="batch-order-count" type="number" min="1" max="5000" step="1" value="50" readonly aria-readonly="true"></div></div>
+<button type="button" class="batch-plan-calc" id="batch-plan-calculate">محاسبه نوبت‌ها</button>
+<button type="button" class="batch-plan-calc" id="batch-create-orders" disabled>ساخت سفارش‌های زمان‌بندی‌شده</button>
+<div class="batch-plan-error" id="batch-plan-error" role="alert" hidden></div>
+<div class="batch-plan-result" id="batch-plan-result" hidden aria-live="polite"><div class="batch-plan-summary"><span>تعداد نوبت‌ها: <b id="batch-plan-count">—</b></span><span>اولین نوبت: <b id="batch-plan-first" dir="ltr">—</b></span><span>آخرین نوبت: <b id="batch-plan-last" dir="ltr">—</b></span><span>تعداد سهم هر سفارش: <b id="batch-plan-quantity">—</b></span></div><div class="batch-plan-table-wrap"><table class="batch-plan-table"><thead><tr><th>شماره</th><th>زمان نوبت (تهران)</th></tr></thead><tbody id="batch-plan-rows"></tbody></table></div></div>
+</div></details>
+<button class="submit wide" type="submit">ذخیره سفارش</button></div></form>
 <div class="foot">قیمت به ریال و تعداد به عدد سهم وارد شود. در مسیر API، ISIN دقیق نماد الزامی است.</div></section>{{end}}
-<section class="card"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><h2 style="margin:0">{{if .History}}تاریخچه سفارش‌ها{{else}}سفارش‌های فعال{{end}} ({{len .Orders}})</h2>{{if .History}}<form method="post" action="/history/clear" onsubmit="return confirm('تمام موارد تاریخچه برای همیشه پاک شوند؟ سفارش‌های زمان‌بندی‌شده فعال دست‌نخورده می‌مانند.')"><button type="submit" class="cancel">پاک کردن تاریخچه</button></form>{{end}}</div><div class="tablewrap"><table>
+<section class="card"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><h2 style="margin:0">{{if .History}}تاریخچه سفارش‌ها{{else}}سفارش‌های فعال{{end}} ({{len .Orders}})</h2>{{if .History}}<form method="post" action="/history/clear" onsubmit="return confirm('تمام موارد تاریخچه برای همیشه پاک شوند؟ سفارش‌های زمان‌بندی‌شده فعال دست‌نخورده می‌مانند.')"><button type="submit" class="cancel">پاک کردن تاریخچه</button></form>{{else if and .PreviewMode (gt (len .Orders) 0)}}<form method="post" action="/orders/cancel-all" onsubmit="return confirm('تمام سفارش‌های زمان‌بندی‌شده فعال لغو شوند؟ این عملیات قابل بازگشت نیست.')"><button type="submit" class="cancel">لغو همه</button></form>{{end}}</div><div class="tablewrap"><table>
 <thead><tr><th>نماد</th><th>نوع</th><th>قیمت</th><th>تعداد</th><th>زمان تهران</th><th>مسیر</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>
 {{range .Orders}}<tr><td><b>{{.Symbol}}</b>{{if .ISIN}}<div class="foot">{{.ISIN}}</div>{{end}}</td><td>{{if eq .Side "buy"}}<span class="buy">خرید</span>{{else}}<span class="sell">فروش</span>{{end}}</td>
 <td>{{.Price}}</td><td>{{.Quantity}}</td><td>{{jalali .ExecuteAt}}</td><td>{{executionMode .ExecutionMode}}</td>
@@ -876,7 +924,7 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
         if (!Number.isFinite(data.unix_millis)) throw new Error("invalid server time");
         serverBaseMs = data.unix_millis;
         performanceBaseMs = performance.now();
-        status.textContent = "مبنای زمان: ساعت سیستم Ubuntu · همگام‌سازی زنده";
+        status.textContent = "همگام با Ubuntu";
         tick();
       } catch (_) {
         status.textContent = "دریافت ساعت سرور ناموفق بود؛ در حال تلاش مجدد";
@@ -885,6 +933,171 @@ th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-
     window.setInterval(tick, 200);
     sync();
     window.setInterval(sync, 30000);
+  })();
+  // Display-only batch planner. It calculates timestamps through the server
+  // endpoint and never creates, stores, schedules, or submits broker orders.
+  (() => {
+    const button = document.getElementById("batch-plan-calculate");
+    const targetField = document.getElementById("execute-time");
+    const leadField = document.getElementById("batch-lead-seconds");
+    const intervalField = document.getElementById("batch-interval-ms");
+    const errorBox = document.getElementById("batch-plan-error");
+    const resultBox = document.getElementById("batch-plan-result");
+    const rows = document.getElementById("batch-plan-rows");
+    const createButton = document.getElementById("batch-create-orders");
+    const quantityMode = document.getElementById("batch-quantity-mode");
+    const orderCount = document.getElementById("batch-order-count");
+    const orderForm = document.getElementById("order-form");
+    let currentPlan = null;
+    if (!button || !targetField || !leadField || !intervalField || !errorBox || !resultBox || !rows || !createButton || !quantityMode || !orderCount || !orderForm) return;
+
+    function clearResult() {
+      resultBox.hidden = true;
+      errorBox.hidden = true;
+      rows.replaceChildren();
+      createButton.disabled = true;
+      currentPlan = null;
+    }
+    function showError(message) {
+      resultBox.hidden = true;
+      errorBox.textContent = message;
+      errorBox.hidden = false;
+    }
+    function parseClockMilliseconds(value) {
+      const match = String(value || "").match(/^(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/);
+      if (!match) return null;
+      const hour = Number(match[1]);
+      const minute = Number(match[2]);
+      const second = Number(match[3] || "0");
+      const millis = Number((match[4] || "").padEnd(3, "0"));
+      if (hour > 23 || minute > 59 || second > 59) return null;
+      return ((hour * 60 + minute) * 60 + second) * 1000 + millis;
+    }
+    function addCell(row, text) {
+      const cell = document.createElement("td");
+      cell.textContent = text;
+      row.appendChild(cell);
+    }
+    button.addEventListener("click", async () => {
+      clearResult();
+      const targetMS = parseClockMilliseconds(targetField.value);
+      const leadSeconds = Number(leadField.value);
+      const intervalMS = Number(intervalField.value);
+      if (targetMS === null) {
+        showError("ابتدا ساعت هدف را در فیلد «ساعت اجرا» به‌درستی وارد کن.");
+        return;
+      }
+      if (!Number.isFinite(leadSeconds) || leadSeconds <= 0 || leadSeconds > 3600) {
+        showError("زمان شروع باید بیشتر از صفر و حداکثر ۳۶۰۰ ثانیه باشد.");
+        return;
+      }
+      if (!Number.isInteger(intervalMS) || intervalMS < 1 || intervalMS > 60000) {
+        showError("فاصله نوبت‌ها باید عدد صحیح بین ۱ تا ۶۰٬۰۰۰ میلی‌ثانیه باشد.");
+        return;
+      }
+      const leadMS = Math.round(leadSeconds * 1000);
+      if (targetMS < leadMS) {
+        showError("شروع برنامه به روز قبل می‌افتد؛ تاریخ هدف را برای روز بعد تنظیم کن.");
+        return;
+      }
+      button.disabled = true;
+      button.textContent = "در حال محاسبه…";
+      try {
+        const query = new URLSearchParams({
+          target_ms: String(targetMS),
+          lead_ms: String(leadMS),
+          interval_ms: String(intervalMS)
+        });
+        const response = await fetch("/api/order-plan?" + query.toString(), {
+          cache: "no-store", headers: {"Accept": "application/json"}
+        });
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || "محاسبه برنامه انجام نشد.");
+        }
+        const plan = await response.json();
+        currentPlan = plan;
+        orderCount.value = String(plan.count);
+        rows.replaceChildren();
+        for (const slot of plan.slots) {
+          const row = document.createElement("tr");
+          addCell(row, String(slot.number));
+          addCell(row, slot.time);
+          rows.appendChild(row);
+        }
+        document.getElementById("batch-plan-count").textContent = String(plan.count);
+        document.getElementById("batch-plan-first").textContent = plan.first;
+        document.getElementById("batch-plan-last").textContent = plan.last;
+        const qty = Number(orderForm.elements.quantity.value);
+        const perOrder = quantityMode.value === "each" ? qty : Math.floor(qty / plan.count);
+        document.getElementById("batch-plan-quantity").textContent = Number.isFinite(perOrder) && perOrder > 0 ? perOrder.toLocaleString("fa-IR") : "—";
+        resultBox.hidden = false;
+        createButton.disabled = false;
+      } catch (error) {
+        showError(error && error.message ? error.message : "خطا در محاسبه برنامه.");
+      } finally {
+        button.disabled = false;
+        button.textContent = "محاسبه نوبت‌ها";
+      }
+    });
+    createButton.addEventListener("click", async () => {
+      if (!currentPlan) {
+        showError("ابتدا نوبت‌ها را محاسبه کن.");
+        return;
+      }
+      if (!orderForm.reportValidity()) return;
+      const formData = new FormData(orderForm);
+      formData.set("batch_order_count", String(currentPlan.count));
+      formData.set("batch_lead_seconds", leadField.value);
+      formData.set("batch_interval_ms", intervalField.value);
+      formData.set("batch_quantity_mode", quantityMode.value);
+      const executionMode = String(formData.get("execution_mode") || "manual");
+      if (executionMode === "api") {
+        const quantity = BigInt(String(formData.get("quantity")));
+        const price = BigInt(String(formData.get("price")));
+        const totalQuantity = quantityMode.value === "each"
+          ? quantity * BigInt(currentPlan.count)
+          : quantity;
+        const grossValue = totalQuantity * price;
+        const fmt = value => new Intl.NumberFormat("fa-IR").format(value);
+        const message = [
+          "تأیید ارسال دسته‌ای با API",
+          "",
+          "تعداد درخواست‌های مستقل به رابین: " + fmt(currentPlan.count),
+          "تعداد کل سهم: " + fmt(totalQuantity),
+          "ارزش اسمی کل (ریال): " + fmt(grossValue),
+          "",
+          "هر نوبت می‌تواند به‌عنوان سفارش واقعی در کارگزاری ثبت یا اجرا شود.",
+          "در صورت ابهام در پاسخ رابین، سیستم همان سفارش را خودکار تکرار نمی‌کند.",
+          "",
+          "آیا ساخت و زمان‌بندی این دسته را تأیید می‌کنی؟"
+        ].join("\n");
+        if (!window.confirm(message)) return;
+      }
+      createButton.disabled = true;
+      createButton.textContent = "در حال ذخیره سفارش‌ها…";
+      errorBox.hidden = true;
+      try {
+        const body = new URLSearchParams();
+        for (const [key, value] of formData.entries()) body.append(key, String(value));
+        const response = await fetch("/orders/batch", {
+          method: "POST", body, cache: "no-store",
+          headers: {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"}
+        });
+        if (!response.ok) throw new Error((await response.text()) || "ذخیره سفارش‌ها انجام نشد.");
+        const result = await response.json();
+        window.location.assign("/?notice=batch_saved&count=" + encodeURIComponent(result.count) + "&mode=" + encodeURIComponent(result.mode));
+      } catch (error) {
+        showError(error && error.message ? error.message : "ذخیره دسته سفارش‌ها ناموفق بود.");
+        createButton.disabled = false;
+      } finally {
+        createButton.textContent = "ساخت سفارش‌های زمان‌بندی‌شده";
+      }
+    });
+    for (const field of [targetField, leadField, intervalField, orderCount, quantityMode, orderForm.elements.quantity, orderForm.elements.symbol, orderForm.elements.price, orderForm.elements.side, orderForm.elements.execution_mode]) {
+      field.addEventListener("input", clearResult);
+      field.addEventListener("change", clearResult);
+    }
   })();
 </script></body></html>`))
 
@@ -935,6 +1148,26 @@ func main() {
 			Timezone   string `json:"timezone"`
 		}{UnixMillis: time.Now().In(tehran()).UnixMilli(), Timezone: "Asia/Tehran"})
 	})
+	mux.HandleFunc("GET /api/order-plan", func(w http.ResponseWriter, r *http.Request) {
+		parseMillis := func(key string) (int64, error) {
+			return strconv.ParseInt(r.URL.Query().Get(key), 10, 64)
+		}
+		targetMS, targetErr := parseMillis("target_ms")
+		leadMS, leadErr := parseMillis("lead_ms")
+		intervalMS, intervalErr := parseMillis("interval_ms")
+		if targetErr != nil || leadErr != nil || intervalErr != nil {
+			http.Error(w, "پارامترهای زمان‌بندی نامعتبر هستند", http.StatusBadRequest)
+			return
+		}
+		plan, err := buildOrderPlan(targetMS, leadMS, intervalMS)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(plan)
+	})
 	mux.HandleFunc("GET /api/calendar", func(w http.ResponseWriter, r *http.Request) {
 		year, errY := strconv.Atoi(r.URL.Query().Get("year"))
 		month, errM := strconv.Atoi(r.URL.Query().Get("month"))
@@ -964,12 +1197,22 @@ func main() {
 			orders = store.historySnapshot()
 		}
 		symbols, catalogStatus := marketSymbolCatalogStatus(symbolCatalog)
-		data := PageData{Orders: orders, Now: formatJalaliDateTime(now), JYear: year, JMonth: month, JDay: day, History: history, APIAvailable: rabinOrderAPICapable(), Symbols: symbols, SymbolCatalogStatus: catalogStatus}
+		data := PageData{Orders: orders, Now: formatJalaliDateTime(now), JYear: year, JMonth: month, JDay: day, History: history, APIAvailable: rabinOrderAPICapable(), PreviewMode: strings.EqualFold(env("RABIN_PREVIEW_MODE", "false"), "true"), Symbols: symbols, SymbolCatalogStatus: catalogStatus}
 		switch r.URL.Query().Get("notice") {
 		case "saved":
 			data.Notice = "سفارش ذخیره شد."
+		case "batch_saved":
+			count, _ := strconv.Atoi(r.URL.Query().Get("count"))
+			if r.URL.Query().Get("mode") == executionModeAPI {
+				data.Notice = fmt.Sprintf("%d سفارش مستقل با مسیر API زمان‌بندی شدند؛ هر سفارش در زمان تعیین‌شده جداگانه به رابین ارسال می‌شود.", count)
+			} else {
+				data.Notice = fmt.Sprintf("%d سفارش مستقل بدون API زمان‌بندی شدند.", count)
+			}
 		case "cancelled":
 			data.Notice = "سفارش لغو شد."
+		case "all_cancelled":
+			count, _ := strconv.Atoi(r.URL.Query().Get("count"))
+			data.Notice = fmt.Sprintf("%d سفارش زمان‌بندی‌شده لغو شد.", count)
 		case "manual_confirmed":
 			data.Notice = "تأیید دستی ثبت شد. این تأیید به معنی راستی‌آزمایی خودکار کارگزاری نیست."
 		case "history_cleared":
@@ -1064,6 +1307,117 @@ func main() {
 		}
 		http.Redirect(w, r, "/history?notice=history_cleared", http.StatusSeeOther)
 	})
+	mux.HandleFunc("POST /orders/cancel-all", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "درخواست نامعتبر", http.StatusForbidden)
+			return
+		}
+		if !strings.EqualFold(env("RABIN_PREVIEW_MODE", "false"), "true") {
+			http.Error(w, "لغو گروهی فقط در نسخه آزمایشی فعال است", http.StatusForbidden)
+			return
+		}
+		count, err := store.cancelAllScheduled(time.Now().In(tehran()))
+		if err != nil {
+			renderError(w, store, "لغو گروهی سفارش‌ها انجام نشد: "+err.Error())
+			return
+		}
+		http.Redirect(w, r, "/?notice=all_cancelled&count="+strconv.Itoa(count), http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /orders/batch", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "درخواست نامعتبر", http.StatusForbidden)
+			return
+		}
+		if !strings.EqualFold(env("RABIN_PREVIEW_MODE", "false"), "true") {
+			http.Error(w, "ساخت دسته‌ای سفارش فقط در نسخه آزمایشی فعال است", http.StatusForbidden)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "فرم نامعتبر است یا حجم آن بیش از حد مجاز است", http.StatusBadRequest)
+			return
+		}
+		executionMode := strings.TrimSpace(r.FormValue("execution_mode"))
+		if executionMode == "" {
+			executionMode = executionModeManual
+		}
+		if executionMode != executionModeManual && executionMode != executionModeAPI {
+			http.Error(w, "مسیر اجرای سفارش معتبر نیست", http.StatusBadRequest)
+			return
+		}
+		if executionMode == executionModeAPI {
+			if !rabinOrderAPICapable() {
+				http.Error(w, "ارسال API در نسخه آزمایشی فعال نیست؛ مجوز اختصاصی را بررسی کن", http.StatusForbidden)
+				return
+			}
+			token, _, tokenErr := credentials.LoadAccessToken()
+			if tokenErr != nil || strings.TrimSpace(token) == "" {
+				http.Error(w, "نشست معتبر رابین موجود نیست؛ ابتدا اتصال رابین را برقرار کن", http.StatusBadRequest)
+				return
+			}
+		}
+		count, countErr := strconv.Atoi(r.FormValue("batch_order_count"))
+		leadMS, leadErr := strconv.ParseFloat(r.FormValue("batch_lead_seconds"), 64)
+		intervalMS, intervalErr := strconv.ParseInt(r.FormValue("batch_interval_ms"), 10, 64)
+		if countErr != nil || count < 1 || count > orderPlanMaxSlots ||
+			leadErr != nil || leadMS <= 0 || leadMS > 3600 ||
+			intervalErr != nil || intervalMS < 1 || intervalMS > orderPlanMaxIntervalMS {
+			http.Error(w, "تعداد سفارش یا تنظیمات فاصله زمانی معتبر نیست", http.StatusBadRequest)
+			return
+		}
+		leadMilliseconds := int64(leadMS * 1000)
+		dateText := strings.TrimSpace(r.FormValue("execute_at_date"))
+		target, err := parseJalaliDateTime(dateText + " " + strings.TrimSpace(r.FormValue("execute_time")))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		targetDay := time.Date(target.Year(), target.Month(), target.Day(), 0, 0, 0, 0, tehran())
+		targetMS := target.Sub(targetDay).Milliseconds()
+		plan, err := buildOrderPlan(targetMS, leadMilliseconds, intervalMS)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if plan.Count != count {
+			http.Error(w, fmt.Sprintf("تعداد نوبت‌های محاسبه‌شده %d است؛ مقدار تعداد سفارش‌ها را با آن برابر کن", plan.Count), http.StatusBadRequest)
+			return
+		}
+		mode := strings.TrimSpace(r.FormValue("batch_quantity_mode"))
+		quantity, quantityErr := strconv.ParseInt(r.FormValue("quantity"), 10, 64)
+		quantities, err := allocateBatchQuantities(quantity, count, mode)
+		if quantityErr != nil || err != nil {
+			if err == nil { err = errors.New("تعداد سهم معتبر نیست") }
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		firstMS := targetMS - leadMilliseconds
+		r.Form.Set("execute_at", dateText + " " + formatOrderPlanClock(firstMS))
+		now := time.Now().In(tehran())
+		baseOrder, err := validateOrder(r, now)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		orders := make([]Order, 0, count)
+		for i := 0; i < count; i++ {
+			order := baseOrder
+			order.ID = fmt.Sprintf("%d-%05d", now.UnixNano(), i+1)
+			order.Quantity = quantities[i]
+			order.ExecuteAt = targetDay.Add(time.Duration(firstMS+int64(i)*intervalMS) * time.Millisecond)
+			orders = append(orders, order)
+		}
+		if err := store.addMany(orders); err != nil {
+			http.Error(w, "ذخیره یکپارچه سفارش‌ها انجام نشد: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(struct {
+			Count int    `json:"count"`
+			Mode  string `json:"mode"`
+		}{Count: len(orders), Mode: baseOrder.ExecutionMode})
+	})
 	mux.HandleFunc("POST /orders", func(w http.ResponseWriter, r *http.Request) {
 		if !sameOrigin(r) {
 			log.Printf("POST /orders rejected: host=%q origin=%q referer=%q fetch-site=%q", r.Host, r.Header.Get("Origin"), r.Referer(), r.Header.Get("Sec-Fetch-Site"))
@@ -1131,6 +1485,7 @@ func renderError(w http.ResponseWriter, store *Store, message string) {
 		JMonth: func() int { _, m, _ := currentJalaliParts(time.Now().In(tehran())); return m }(),
 		JDay: func() int { _, _, d := currentJalaliParts(time.Now().In(tehran())); return d }(),
 		APIAvailable: rabinOrderAPICapable(),
+		PreviewMode: strings.EqualFold(env("RABIN_PREVIEW_MODE", "false"), "true"),
 		Symbols: defaultMarketSymbols(),
 		SymbolCatalogStatus: "در صورت عدم دسترسی به منبع، فهرست پشتیبان خودرو نمایش داده می‌شود.",
 	})

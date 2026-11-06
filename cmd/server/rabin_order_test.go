@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -130,12 +133,91 @@ func TestRabinOrderIDAcceptsScalarIDs(t *testing.T) {
 }
 
 func TestRabinOrderAPIRemainsOptIn(t *testing.T) {
+	t.Setenv("RABIN_PREVIEW_MODE", "false")
+	t.Setenv("RABIN_PREVIEW_LIVE_ORDER_OPT_IN", "false")
 	t.Setenv("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "false")
 	if rabinOrderAPICapable() {
 		t.Fatal("API order submission must be disabled by default")
 	}
 	t.Setenv("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "true")
 	if !rabinOrderAPICapable() {
-		t.Fatal("explicit API order opt-in was not recognized")
+		t.Fatal("explicit production API opt-in was not recognized")
 	}
 }
+
+func TestRabinPreviewAPIRequiresSeparateExplicitOptIn(t *testing.T) {
+	t.Setenv("RABIN_PREVIEW_MODE", "true")
+	t.Setenv("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "true")
+	t.Setenv("RABIN_PREVIEW_LIVE_ORDER_OPT_IN", "false")
+	if rabinOrderAPICapable() {
+		t.Fatal("preview API must remain disabled without its dedicated opt-in")
+	}
+	t.Setenv("RABIN_PREVIEW_LIVE_ORDER_OPT_IN", "true")
+	if !rabinOrderAPICapable() {
+		t.Fatal("explicit preview API opt-in was not recognized")
+	}
+}
+
+func TestRabinPreviewOptInDoesNotEnableProductionAPI(t *testing.T) {
+	t.Setenv("RABIN_PREVIEW_MODE", "false")
+	t.Setenv("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "false")
+	t.Setenv("RABIN_PREVIEW_LIVE_ORDER_OPT_IN", "true")
+	if rabinOrderAPICapable() {
+		t.Fatal("preview opt-in must not enable production API")
+	}
+}
+
+func TestValidateOrderAllowsPreviewAPIBatchOrderWithExplicitOptIn(t *testing.T) {
+	t.Setenv("RABIN_PREVIEW_MODE", "true")
+	t.Setenv("RABIN_PREVIEW_LIVE_ORDER_OPT_IN", "true")
+	t.Setenv("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "false")
+
+	now := time.Date(2026, 11, 6, 10, 0, 0, 0, tehran())
+	year, month, day := currentJalaliParts(now.Add(24 * time.Hour))
+	form := url.Values{
+		"symbol":          {"TEST"},
+		"isin":            {"IR1234567890"},
+		"side":            {"buy"},
+		"price":           {"1000"},
+		"quantity":        {"10"},
+		"execution_mode":  {executionModeAPI},
+		"execute_at_date": {fmt.Sprintf("%04d/%02d/%02d", year, month, day)},
+		"execute_time":    {"11:00:00.000"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/orders", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	order, err := validateOrder(req, now)
+	if err != nil {
+		t.Fatalf("preview API order should validate with explicit opt-in: %v", err)
+	}
+	if order.ExecutionMode != executionModeAPI || order.Status != statusScheduled || order.Quantity != 10 {
+		t.Fatalf("unexpected preview batch order: %+v", order)
+	}
+}
+
+func TestValidateOrderRejectsPreviewAPIBatchOrderWithoutExplicitOptIn(t *testing.T) {
+	t.Setenv("RABIN_PREVIEW_MODE", "true")
+	t.Setenv("RABIN_PREVIEW_LIVE_ORDER_OPT_IN", "false")
+	t.Setenv("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "true")
+
+	now := time.Date(2026, 11, 6, 10, 0, 0, 0, tehran())
+	year, month, day := currentJalaliParts(now.Add(24 * time.Hour))
+	form := url.Values{
+		"symbol":          {"TEST"},
+		"isin":            {"IR1234567890"},
+		"side":            {"buy"},
+		"price":           {"1000"},
+		"quantity":        {"10"},
+		"execution_mode":  {executionModeAPI},
+		"execute_at_date": {fmt.Sprintf("%04d/%02d/%02d", year, month, day)},
+		"execute_time":    {"11:00:00.000"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/orders", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	if _, err := validateOrder(req, now); err == nil {
+		t.Fatal("preview API order must be rejected when its dedicated opt-in is disabled")
+	}
+}
+
