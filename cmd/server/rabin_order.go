@@ -40,6 +40,11 @@ type RabinSubmitResult struct {
 }
 
 func rabinOrderAPICapable() bool {
+	// Preview deployments have their own explicit live-order opt-in. This gate
+	// is intentionally independent from the production flag and defaults off.
+	if strings.EqualFold(env("RABIN_PREVIEW_MODE", "false"), "true") {
+		return strings.EqualFold(env("RABIN_PREVIEW_LIVE_ORDER_OPT_IN", "false"), "true")
+	}
 	return strings.EqualFold(env("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "false"), "true")
 }
 
