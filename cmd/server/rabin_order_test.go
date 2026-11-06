@@ -130,12 +130,36 @@ func TestRabinOrderIDAcceptsScalarIDs(t *testing.T) {
 }
 
 func TestRabinOrderAPIRemainsOptIn(t *testing.T) {
+	t.Setenv("RABIN_PREVIEW_MODE", "false")
+	t.Setenv("RABIN_PREVIEW_LIVE_ORDER_OPT_IN", "false")
 	t.Setenv("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "false")
 	if rabinOrderAPICapable() {
 		t.Fatal("API order submission must be disabled by default")
 	}
 	t.Setenv("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "true")
 	if !rabinOrderAPICapable() {
-		t.Fatal("explicit API order opt-in was not recognized")
+		t.Fatal("explicit production API opt-in was not recognized")
+	}
+}
+
+func TestRabinPreviewAPIRequiresSeparateExplicitOptIn(t *testing.T) {
+	t.Setenv("RABIN_PREVIEW_MODE", "true")
+	t.Setenv("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "true")
+	t.Setenv("RABIN_PREVIEW_LIVE_ORDER_OPT_IN", "false")
+	if rabinOrderAPICapable() {
+		t.Fatal("preview API must remain disabled without its dedicated opt-in")
+	}
+	t.Setenv("RABIN_PREVIEW_LIVE_ORDER_OPT_IN", "true")
+	if !rabinOrderAPICapable() {
+		t.Fatal("explicit preview API opt-in was not recognized")
+	}
+}
+
+func TestRabinPreviewOptInDoesNotEnableProductionAPI(t *testing.T) {
+	t.Setenv("RABIN_PREVIEW_MODE", "false")
+	t.Setenv("RABIN_ENABLE_LIVE_ORDER_SUBMISSION", "false")
+	t.Setenv("RABIN_PREVIEW_LIVE_ORDER_OPT_IN", "true")
+	if rabinOrderAPICapable() {
+		t.Fatal("preview opt-in must not enable production API")
 	}
 }
