@@ -74,7 +74,10 @@ set_env RABIN_DATA_DIR "$DATA"
 set_env RABIN_CREDENTIALS_KEY_FILE "$KEY"
 set_env RABIN_ENABLE_LIVE_ORDER_SUBMISSION "false"
 set_env RABIN_PREVIEW_MODE "true"
-set_env RABIN_PREVIEW_LIVE_ORDER_OPT_IN "false"
+# Keep an operator's explicit preview API opt-in across updates; default new installs to off.
+if ! grep -q '^RABIN_PREVIEW_LIVE_ORDER_OPT_IN=' "$CONF"; then
+  set_env RABIN_PREVIEW_LIVE_ORDER_OPT_IN "false"
+fi
 chmod 600 "$CONF"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
