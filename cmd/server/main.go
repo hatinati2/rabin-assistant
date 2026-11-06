@@ -439,29 +439,29 @@ var page = template.Must(template.New("page").Funcs(template.FuncMap{
 <title>دستیار رابین</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f4f6fa;color:#182230;font:14px Tahoma,Arial}
-.wrap{max-width:1100px;margin:30px auto;padding:0 16px}.head{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:18px}
+.wrap{max-width:1400px;margin:18px auto;padding:0 16px}.head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}
 h1{font-size:22px;margin:0}.muted,.foot{color:#667085}.tag{background:#eef4ff;color:#1849a9;border-radius:18px;padding:7px 10px;font-size:12px}
 .nav{display:flex;gap:7px;flex-wrap:wrap}.nav a{display:inline-block;padding:9px 12px;border:1px solid #d0d5dd;border-radius:9px;color:#344054;text-decoration:none;background:#fff}.nav a.active{background:#175cd3;color:#fff;border-color:#175cd3}
-.note,.msg{padding:12px;border-radius:9px;margin:12px 0;line-height:1.8}.note{background:#fffaeb;border:1px solid #fedf89;color:#93370d}
+.note,.msg{padding:9px 11px;border-radius:9px;margin:8px 0;line-height:1.65}.note{background:#fffaeb;border:1px solid #fedf89;color:#93370d}
 .msg{background:#ecfdf3;color:#05603a}.err{background:#fef3f2;color:#b42318}
-.grid{display:grid;grid-template-columns:320px 1fr;gap:16px}.grid.history{grid-template-columns:1fr}.card{background:white;border:1px solid #e4e7ec;border-radius:13px;padding:17px;min-width:0}
-h2{font-size:16px;margin:0 0 14px}label{display:block;margin:12px 0 6px;font-weight:bold}
-input,select{width:100%;padding:10px;border:1px solid #d0d5dd;border-radius:8px;font:inherit}
+.grid{display:grid;grid-template-columns:minmax(390px,440px) minmax(0,1fr);gap:14px;align-items:start}.grid.history{grid-template-columns:1fr}.card{background:white;border:1px solid #e4e7ec;border-radius:13px;padding:13px;min-width:0}
+h2{font-size:16px;margin:0 0 9px}label{display:block;margin:8px 0 4px;font-weight:bold}
+input,select{width:100%;padding:7px 9px;border:1px solid #d0d5dd;border-radius:8px;font:inherit;min-height:36px}
 button{border:0;border-radius:8px;background:#175cd3;color:white;padding:10px 13px;font:inherit;cursor:pointer}
-.submit{width:100%;margin-top:15px}.cancel{background:white;color:#b42318;border:1px solid #fecdca;padding:6px 9px}
+.submit{width:100%;margin-top:9px}.cancel{background:white;color:#b42318;border:1px solid #fecdca;padding:6px 9px}
 table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{text-align:right;padding:10px 7px;border-bottom:1px solid #eaecf0}
 th{font-size:12px;color:#667085}.tablewrap{overflow:auto}.status{display:inline-block;border-radius:16px;padding:5px 8px;font-size:11px}
 .scheduled{background:#eff8ff;color:#175cd3}.ready{background:#fffaeb;color:#b54708}.cancelled{background:#f2f4f7;color:#475467}
 .buy{color:#067647;font-weight:bold}.sell{color:#b42318;font-weight:bold}.empty{text-align:center;color:#667085;padding:28px}
-.foot{font-size:12px;line-height:1.8;margin-top:12px}
-.server-clock{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 16px;padding:13px 16px;background:#fff;border:1px solid #d0d5dd;border-radius:12px}.server-clock-label{color:#667085;font-size:13px}.server-clock-value{font:700 25px Tahoma,Arial;direction:ltr;font-variant-numeric:tabular-nums;letter-spacing:1px;color:#175cd3}.server-clock-status{font-size:11px;color:#667085}@media(max-width:480px){.server-clock{align-items:flex-start;flex-direction:column}.server-clock-value{font-size:23px}}
+.foot{font-size:11px;line-height:1.6;margin-top:7px}
+.server-clock{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0;padding:8px 11px;background:#fff;border:1px solid #d0d5dd;border-radius:12px}.server-clock-label{color:#667085;font-size:13px}.server-clock-value{font:700 25px Tahoma,Arial;direction:ltr;font-variant-numeric:tabular-nums;letter-spacing:1px;color:#175cd3}.server-clock-status{font-size:11px;color:#667085}@media(max-width:480px){.server-clock{align-items:flex-start;flex-direction:column}.server-clock-value{font-size:23px}}
 .symbol-suggestions{margin-top:5px;border:1px solid #d0d5dd;border-radius:9px;background:#fff;max-height:280px;overflow:auto;box-shadow:0 8px 20px rgba(16,24,40,.10)}
 .symbol-suggestions[hidden]{display:none}
 .symbol-suggestion{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:10px 12px;border:0;border-radius:0;border-bottom:1px solid #eaecf0;background:#fff;color:#182230;text-align:right;cursor:pointer}
 .symbol-suggestion:last-child{border-bottom:0}.symbol-suggestion:hover,.symbol-suggestion:focus{background:#eff8ff;outline:none}
 .symbol-suggestion-main{display:flex;flex-direction:column;gap:4px;min-width:0}.symbol-suggestion-name{font-weight:bold}.symbol-suggestion-company{font-size:12px;color:#667085;white-space:normal}.symbol-suggestion-isin{direction:ltr;font-size:11px;color:#475467;white-space:nowrap}
 .datebox{position:relative}.datebar{display:flex;gap:8px}.datebar input{flex:1}.datebar button{white-space:nowrap}.calendar{margin-top:8px;padding:12px;border:1px solid #d0d5dd;border-radius:10px;background:#fff}.cal-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}.cal-nav{background:#f2f4f7;color:#344054;padding:7px 10px}.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;text-align:center}.cal-grid span{padding:7px 0;color:#667085;font-size:12px}.cal-day{background:#f8fafc;color:#182230;padding:9px 2px;border-radius:7px}.cal-day:hover,.cal-day.selected{background:#175cd3;color:#fff}.cal-day.today{outline:2px solid #84adff}.cal-empty{min-height:34px}
-@media(max-width:800px){.grid{grid-template-columns:1fr}.head{align-items:flex-start;gap:10px;flex-direction:column}}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.head{align-items:flex-start;gap:10px;flex-direction:column}}
 </style></head><body data-jyear="{{.JYear}}" data-jmonth="{{.JMonth}}" data-jday="{{.JDay}}"><main class="wrap">
 <div class="head"><div><h1>دستیار رابین</h1><div class="muted" style="margin-top:7px">مدیریت سفارش‌ها · ساعت تهران</div></div><div class="nav"><a class="{{if not .History}}active{{end}}" href="/">سفارش‌های فعال</a><a class="{{if .History}}active{{end}}" href="/history">تاریخچه</a><a href="/settings">اتصال به رابین</a></div><span class="tag">{{if .APIAvailable}}ارسال واقعی API فعال است{{else}}ارسال واقعی API غیرفعال است{{end}}</span></div>
 <div class="note"><b>دو مسیر اجرا:</b> مسیر «بدون API» سفارش را برای ثبت دستی آماده می‌کند. مسیر «با API» فقط در صورت فعال‌سازی صریح در تنظیمات سرور، وجود نشست معتبر و ثبت ISIN، در زمان مقرر یک درخواست سفارش عادی به رابین ارسال می‌کند. در صورت نامشخص بودن نتیجه ارسال، سیستم سفارش را خودکار تکرار نمی‌کند.</div>
