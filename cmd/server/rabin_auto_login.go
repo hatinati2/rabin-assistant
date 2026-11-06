@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"log"
-	"sync"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -53,16 +53,12 @@ func (m *RabinAutoLogin) Prepare(store *Store, credentials *RabinCredentialStore
 		m.mu.Unlock()
 		return
 	}
-	if m.ready || m.blocked || m.running {
+	if m.ready || m.blocked || m.running || now.Before(earliest.Add(-2*time.Minute)) {
 		m.mu.Unlock()
 		return
 	}
 	if token, updatedAt, err := credentials.LoadAccessToken(); err == nil && token != "" && !updatedAt.Before(earliest.Add(-2*time.Minute)) {
 		m.ready = true
-		m.mu.Unlock()
-		return
-	}
-	if now.Before(earliest.Add(-2*time.Minute)) {
 		m.mu.Unlock()
 		return
 	}
