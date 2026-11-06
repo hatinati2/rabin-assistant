@@ -53,15 +53,22 @@ func (m *RabinAutoLogin) Prepare(store *Store, credentials *RabinCredentialStore
 		m.mu.Unlock()
 		return
 	}
-	if m.ready || m.blocked || m.running || now.Before(earliest.Add(-2*time.Minute)) {
+	if m.blocked || m.running || now.Before(earliest.Add(-2*time.Minute)) {
 		m.mu.Unlock()
 		return
 	}
-	if token, updatedAt, err := credentials.LoadAccessToken(); err == nil && token != "" && !updatedAt.Before(earliest.Add(-2*time.Minute)) {
+
+	// Readiness is tied to the next order's two-minute login window, not
+	// permanently cached after the first successful login. This also covers
+	// manual logins and service restarts because the token timestamp is stored.
+	if token, updatedAt, err := credentials.LoadAccessToken(); err == nil &&
+		token != "" && !updatedAt.Before(earliest.Add(-2*time.Minute)) {
 		m.ready = true
 		m.mu.Unlock()
 		return
 	}
+
+	m.ready = false
 	m.running = true
 	m.generation++
 	generation := m.generation
